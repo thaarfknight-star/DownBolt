@@ -196,8 +196,8 @@ jobs:
 
           # استیج بسته‌ی آپدیت: exe + هلپر + version.txt + CHANGELOG
           mkdir -p stage dist-feed android-apks prev
-          cp bin/download-manager.exe stage/
-          cp bin/DownBoltUpdater-x86_64-pc-windows-msvc.exe stage/DownBoltUpdater.exe
+          cp bin/target/release/download-manager.exe stage/
+          cp bin/binaries/DownBoltUpdater-x86_64-pc-windows-msvc.exe stage/DownBoltUpdater.exe
           cp version.txt CHANGELOG_FA.md stage/
 
           # APKهای امضاشده‌ی همین نسخه از درفت‌ریلیز (برای بخش android فید)
