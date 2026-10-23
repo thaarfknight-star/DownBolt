@@ -5,11 +5,12 @@ import {
   api,
   etaSeconds,
   onProgressSnapshot,
+  onUpdateProgress,
   progressPct,
   type DmSettings,
   type DownloadItem,
 } from "../lib/api";
-import { faInt, fmtBytes, fmtEta, fmtPct, fmtSpeed } from "../lib/format";
+import { faInt, faNum, fmtBytes, fmtEta, fmtPct, fmtSpeed } from "../lib/format";
 import { SpeedChart } from "./chart";
 
 const STATUS_LABEL: Record<DownloadItem["status"], string> = {
@@ -128,6 +129,31 @@ export function mountApp(root: HTMLElement): void {
       <div class="settings-actions">
         <button id="saveSettingsBtn" class="btn primary" type="button">ذخیره تنظیمات</button>
         <span id="settingsMsg" class="settings-msg"></span>
+      </div>
+
+      <div class="update-box">
+        <h3>به‌روزرسانی برنامه</h3>
+        <div class="field"><span>نسخه‌ی فعلی: <b id="updCurrent">…</b></span></div>
+        <label class="field">
+          <span>حالت به‌روزرسانی خودکار</span>
+          <select id="updMode">
+            <option value="notify">اطلاع‌رسانی (پیش‌فرض)</option>
+            <option value="auto">دانلود خودکار و اطلاع برای نصب</option>
+            <option value="off">خاموش</option>
+          </select>
+        </label>
+        <div class="settings-actions">
+          <button id="updCheckBtn" class="btn" type="button">بررسی به‌روزرسانی</button>
+          <button id="updFileBtn" class="btn" type="button">بارگذاری فایل به‌روزرسانی…</button>
+        </div>
+        <p id="updStatus" class="settings-msg"></p>
+        <div id="updProgress" class="upd-progress" hidden><div id="updBar" class="upd-bar"></div></div>
+        <p id="updNotes" class="upd-notes"></p>
+        <div class="settings-actions">
+          <button id="updDownloadBtn" class="btn primary" type="button" hidden>دانلود</button>
+          <button id="updCancelBtn" class="btn" type="button" hidden>لغو دانلود</button>
+          <button id="updApplyBtn" class="btn primary" type="button" hidden>نصب به‌روزرسانی</button>
+        </div>
       </div>
     </section>
 
@@ -383,6 +409,156 @@ export function mountApp(root: HTMLElement): void {
   void onProgressSnapshot(applySnapshot).catch(() => undefined);
   void refresh();
   window.setInterval(() => void refresh(), 1000);
+  /* ── به‌روزرسانی (موتور v2 — مثل شیرین‌حساب) ── */
+  const updStatus = $<HTMLElement>("#updStatus");
+  const updNotes = $<HTMLElement>("#updNotes");
+  const updProgress = $<HTMLElement>("#updProgress");
+  const updBar = $<HTMLElement>("#updBar");
+  const updDownloadBtn = $<HTMLButtonElement>("#updDownloadBtn");
+  const updCancelBtn = $<HTMLButtonElement>("#updCancelBtn");
+  const updApplyBtn = $<HTMLButtonElement>("#updApplyBtn");
+  const updModeSel = $<HTMLSelectElement>("#updMode");
+  const MODE_KEY = "dm_update_mode";
+  updModeSel.value = localStorage.getItem(MODE_KEY) || "notify";
+  updModeSel.addEventListener("change", () =>
+    localStorage.setItem(MODE_KEY, updModeSel.value),
+  );
+
+  let updDownloading = false;
+  function updResetButtons(): void {
+    updDownloadBtn.hidden = true;
+    updCancelBtn.hidden = true;
+    updApplyBtn.hidden = true;
+    updProgress.hidden = true;
+  }
+
+  async function doUpdateCheck(auto = false): Promise<void> {
+    if (!auto) updStatus.textContent = "در حال بررسی…";
+    let info;
+    try {
+      info = await api.checkUpdate();
+    } catch (e) {
+      if (!auto)
+        updStatus.textContent =
+          "بررسی ناموفق بود: " + String((e as Error)?.message || e);
+      return;
+    }
+    if (!info) {
+      if (!auto) updStatus.textContent = "برنامه به‌روز است.";
+      updNotes.textContent = "";
+      updResetButtons();
+      return;
+    }
+    updStatus.textContent =
+      "نسخه‌ی تازه‌ی " + info.version + " آماده است (" + fmtBytes(info.size) + ").";
+    updNotes.textContent = info.notes_fa || "";
+    updDownloadBtn.hidden = false;
+    if (auto && updModeSel.value === "auto") void startUpdateDownload();
+  }
+
+  async function startUpdateDownload(): Promise<void> {
+    if (updDownloading) return;
+    updDownloading = true;
+    updDownloadBtn.hidden = true;
+    updApplyBtn.hidden = true;
+    updCancelBtn.hidden = false;
+    updProgress.hidden = false;
+    updBar.style.width = "0%";
+    updStatus.textContent = "در حال دانلود به‌روزرسانی…";
+    try {
+      await api.downloadUpdate();
+      const readyPath = await api.readyUpdatePath().catch(() => null);
+      updCancelBtn.hidden = true;
+      if (readyPath) {
+        updProgress.hidden = true;
+        updApplyBtn.hidden = false;
+        updApplyBtn.dataset.apkPath = readyPath;
+        updStatus.textContent = "دانلود کامل شد؛ برای نصب دکمه‌ی «نصب به‌روزرسانی» را بزنید.";
+      } else if (updDownloading) {
+        updStatus.textContent =
+          "دانلود کامل شد؛ دکمه‌ی «نصب به‌روزرسانی» را بزنید تا برنامه بسته و نسخه‌ی تازه نصب شود.";
+        updApplyBtn.hidden = false;
+      }
+    } catch (e) {
+      updStatus.textContent = "دانلود ناموفق بود: " + String((e as Error)?.message || e);
+      updCancelBtn.hidden = true;
+      updProgress.hidden = true;
+      updDownloadBtn.hidden = false;
+    } finally {
+      updDownloading = false;
+    }
+  }
+
+  updDownloadBtn.addEventListener("click", () => void startUpdateDownload());
+  updCancelBtn.addEventListener("click", () => {
+    updDownloading = false;
+    void api.cancelUpdateDownload();
+    updCancelBtn.hidden = true;
+    updProgress.hidden = true;
+    updDownloadBtn.hidden = false;
+    updStatus.textContent = "دانلود لغو شد (بخش دانلودشده می‌ماند تا دفعه‌ی بعد ادامه پیدا کند).";
+  });
+  updApplyBtn.addEventListener("click", async () => {
+    const apkPath = updApplyBtn.dataset.apkPath;
+    try {
+      if (apkPath) {
+        await api.installApk(apkPath);
+        updStatus.textContent = "نصب‌کننده‌ی سیستم باز شد؛ نصب را آنجا کامل کنید.";
+      } else {
+        updStatus.textContent = "در حال نصب… برنامه بسته و نسخه‌ی تازه اجرا می‌شود.";
+        await api.applyUpdate();
+      }
+    } catch (e) {
+      updStatus.textContent = "نصب ناموفق بود: " + String((e as Error)?.message || e);
+    }
+  });
+  $<HTMLButtonElement>("#updCheckBtn").addEventListener("click", () => void doUpdateCheck());
+  $<HTMLButtonElement>("#updFileBtn").addEventListener("click", async () => {
+    try {
+      const path = await api.openUpdateFile();
+      if (!path) return;
+      if (path.toLowerCase().endsWith(".apk")) {
+        await api.installApk(path);
+        updStatus.textContent = "نصب‌کننده‌ی سیستم باز شد؛ نصب را آنجا کامل کنید.";
+      } else if (
+        confirm("بسته‌ی به‌روزرسانی نصب شود؟ برنامه بسته و نسخه‌ی تازه اجرا می‌شود.")
+      ) {
+        updStatus.textContent = "در حال نصب بسته‌ی دستی…";
+        await api.applyLocalUpdate(path);
+      }
+    } catch (e) {
+      updStatus.textContent = "نصب بسته ناموفق بود: " + String((e as Error)?.message || e);
+    }
+  });
+
+  void onUpdateProgress((p) => {
+    if (!updDownloading) return;
+    updBar.style.width = Math.min(100, Math.max(0, p.percent)) + "%";
+    updStatus.textContent =
+      "در حال دانلود… " + faNum(p.percent) + "٪ (" + fmtBytes(p.downloaded) + ")";
+  });
+
+  void (async () => {
+    try {
+      const { getVersion } = await import("@tauri-apps/api/app");
+      $<HTMLElement>("#updCurrent").textContent = await getVersion();
+    } catch {
+      $<HTMLElement>("#updCurrent").textContent = "—";
+    }
+    try {
+      const rep = await api.getUpdateReport();
+      if (rep.just_updated_from)
+        toast("به‌روزرسانی انجام شد — از نسخه‌ی " + rep.just_updated_from + " به نسخه‌ی تازه رسیدید.");
+      else if (rep.update_failed_from)
+        toast("به‌روزرسانی ناموفق بود و به نسخه‌ی قبلی برگشتیم.", true);
+    } catch {
+      /* گزارش آپدیت اختیاری است */
+    }
+    if ((localStorage.getItem(MODE_KEY) || "notify") !== "off") {
+      setTimeout(() => void doUpdateCheck(true), 1500);
+    }
+  })();
+
 }
 
 export { escapeHtml };

@@ -35,6 +35,13 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      # هلپر آپدیت (موتور v2): باید قبل از بیلد اصلی آماده باشد (externalBin)
+      - name: Build update helper
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path updater/Cargo.toml
+          Copy-Item "updater/target/release/DownBoltUpdater.exe" "src-tauri/binaries/DownBoltUpdater-x86_64-pc-windows-msvc.exe" -Force
+
       - name: Build and publish draft release (NSIS Setup)
         uses: tauri-apps/tauri-action@v0
         env:
@@ -46,6 +53,15 @@ jobs:
           releaseBody: "فایل Setup ویندوز (NSIS) و APK اندروید در فایل‌های زیر هستند."
           releaseDraft: true
           prerelease: false
+
+      - name: Upload app binaries (for the update feed)
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-binaries
+          path: |
+            src-tauri/target/release/download-manager.exe
+            src-tauri/binaries/DownBoltUpdater-x86_64-pc-windows-msvc.exe
+          if-no-files-found: error
 
   # اندروید روی همان ریپو؛ APK به همان ریلیزی می‌رود که جاب ویندوز ساخته است.
   # امضا: فعلاً بیلد debug (امضای خودکار با دیباگ‌کی) — برای انتشار نهایی باید
@@ -92,6 +108,11 @@ jobs:
 
       - name: Init Android project
         run: npx tauri android init
+
+      # آیکن‌های لانچر DownBolt از ست رسمی تولیدشده (src-tauri/icons/android)
+      # روی قالب پیش‌فرض Tauri می‌نشینند — وگرنه آیکن پیش‌فرض قالب می‌ماند.
+      - name: Apply Android launcher icons
+        run: cp -r src-tauri/icons/android/. src-tauri/gen/android/app/src/main/res/
 
       - name: Setup release signing
         env:
@@ -148,3 +169,73 @@ jobs:
           for apk in DownBolt-v${VERSION}-android-*.apk; do
             gh release upload "v${VERSION}" "$apk" --clobber
           done
+
+  # موتور آپدیت v2 (مثل شیرین‌حساب): بسته‌های آپدیت ویندوز + فید ثابت
+  # (با بخش android از روی APKهای امضاشده‌ی همان ریلیز) + انتشار ریلیز.
+  release-update:
+    needs: [build-windows, build-android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download app binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: app-binaries
+          path: bin
+
+      - name: Build update packages and publish feed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          VERSION=$(python3 -c "import json; print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+          echo "version=$VERSION"
+
+          # استیج بسته‌ی آپدیت: exe + هلپر + version.txt + CHANGELOG
+          mkdir -p stage dist-feed android-apks prev
+          cp bin/download-manager.exe stage/
+          cp bin/DownBoltUpdater-x86_64-pc-windows-msvc.exe stage/DownBoltUpdater.exe
+          cp version.txt CHANGELOG_FA.md stage/
+
+          # APKهای امضاشده‌ی همین نسخه از درفت‌ریلیز (برای بخش android فید)
+          gh release download "v${VERSION}" --pattern "DownBolt-v${VERSION}-android-*.apk" --dir android-apks
+
+          # مانیفست قبلی از فید غلتان (برای دلتا) — نبودنش خطا نیست
+          PREV_ARGS=""
+          FEED_TMP=$(mktemp -d)
+          if gh release download update-feed --pattern "update-feed.json" --dir "$FEED_TMP" 2>/dev/null; then
+            PREV_VER=$(python3 -c "import json; print(json.load(open('$FEED_TMP/update-feed.json'))['version'])" 2>/dev/null || echo "")
+            if [ -n "$PREV_VER" ] && [ "$PREV_VER" != "$VERSION" ]; then
+              if gh release download "v${PREV_VER}" --pattern "DownBolt-Update-*.zip" --dir prev 2>/dev/null && ls prev/*.zip >/dev/null 2>&1; then
+                python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extract('update_info.json', 'prev')" prev/DownBolt-Update-v${PREV_VER}.zip || true
+                if [ -f prev/update_info.json ]; then
+                  mv prev/update_info.json prev/manifest.json
+                  PREV_ARGS="--prev-manifest prev/manifest.json"
+                fi
+              fi
+            fi
+          fi
+
+          python3 tools/make_feed.py --build-dir stage --version "$VERSION" \
+            --changelog CHANGELOG_FA.md --android-dir android-apks \
+            --out-dir dist-feed $PREV_ARGS
+
+          # آپلود بسته‌های آپدیت روی ریلیز نسخه و انتشار ریلیز
+          gh release upload "v${VERSION}" dist-feed/*.zip --clobber
+          REL_ID=$(gh api "repos/${{ github.repository }}/releases/tags/v${VERSION}" --jq .id)
+          curl -s -X PATCH \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/${REL_ID}" \
+            -d '{"draft": false}' > /dev/null
+
+          # فید روی ریلیز غلتان update-feed
+          if ! gh release view update-feed > /dev/null 2>&1; then
+            gh release create update-feed --title "Update Feed" \
+              --notes "فید ثابت موتور آپدیت (دست نزنید)."
+          fi
+          gh release upload update-feed dist-feed/update-feed.json dist-feed/manifest.json --clobber
+          echo "feed published for $VERSION"

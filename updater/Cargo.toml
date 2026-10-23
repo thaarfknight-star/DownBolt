@@ -1,0 +1,19 @@
+[package]
+name = "downbolt-updater"
+version = "0.1.0"
+edition = "2021"
+
+# باینری کمکی آپدیت DownBolt: سبک و مستقل — فقط std + serde_json (بدون Tauri/WebView)
+# خروجی روی ویندوز: DownBoltUpdater.exe — باید کنار exe اصلی نصب شود.
+[[bin]]
+name = "DownBoltUpdater"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = 3

@@ -188,3 +188,11 @@ body {
   .field-grid { grid-template-columns: 1fr; }
   .topbar { flex-wrap: wrap; }
 }
+
+/* ── به‌روزرسانی ── */
+.update-box { margin-top: 22px; border-top: 1px solid var(--line, #1e293b); padding-top: 16px; }
+.update-box h3 { margin: 0 0 12px; font-size: 15px; }
+.update-box select { background: var(--card, #0f172a); color: inherit; border: 1px solid var(--line, #1e293b); border-radius: 8px; padding: 8px 10px; }
+.upd-progress { height: 8px; border-radius: 99px; background: rgba(148, 163, 184, 0.18); overflow: hidden; margin: 10px 0; }
+.upd-bar { height: 100%; width: 0%; border-radius: 99px; background: linear-gradient(90deg, #22d3ee, #818cf8, #e879f9); transition: width 0.25s ease; }
+.upd-notes { white-space: pre-line; font-size: 13px; color: var(--muted); }

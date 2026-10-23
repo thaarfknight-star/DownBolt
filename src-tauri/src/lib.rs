@@ -9,6 +9,7 @@ mod engine;
 mod manager;
 mod model;
 mod store;
+mod updater;
 
 use engine::{EngineEvent, PlaceholderEngine};
 use manager::{AppliedEffect, DownloadManager};
@@ -137,9 +138,14 @@ fn read_clipboard(app: AppHandle) -> Result<String, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // پاک‌سازی فایل‌های ‎.old‎ باقی‌مانده از آپدیت قبلی (موتور آپدیت v2).
+    updater::cleanup_old_files();
+
     tauri::Builder::default()
+        .manage(updater::UpdateV2State::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_downbolt_install::init())
         .setup(|app| {
             let data_dir = app
                 .path()
@@ -206,6 +212,14 @@ pub fn run() {
             set_settings,
             pick_download_dir,
             read_clipboard,
+            updater::check_update2,
+            updater::download_update2,
+            updater::cancel_update_download2,
+            updater::apply_update2,
+            updater::ready_update_path,
+            updater::open_update_file_dialog,
+            updater::apply_local_update,
+            updater::get_update_report,
         ])
         .run(tauri::generate_context!())
         .expect("خطا هنگام اجرای برنامه");
