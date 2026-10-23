@@ -93,13 +93,33 @@ jobs:
       - name: Init Android project
         run: npx tauri android init
 
-      - name: Build Android APK (debug-signed)
-        run: npx tauri android build --debug --apk
+      - name: Setup release signing
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/signing"
+          echo "$ANDROID_KEYSTORE_B64" | base64 -d > "$GITHUB_WORKSPACE/signing/downbolt-release.p12"
+          cat > src-tauri/gen/android/keystore.properties <<EOF
+          storeFile=$GITHUB_WORKSPACE/signing/downbolt-release.p12
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEY_PASSWORD
+          EOF
 
-      - name: Upload APK to the same release
+      - name: Build Android APK (release, split per ABI)
+        run: npx tauri android build --apk --split-per-abi
+
+      - name: Upload APKs to the same release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=$(python3 -c "import json; print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
-          cp src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk "app-v${VERSION}-android.apk"
-          gh release upload "v${VERSION}" "app-v${VERSION}-android.apk" --clobber
+          for apk in $(find src-tauri/gen/android/app/build/outputs/apk -name "*-release.apk"); do
+            abi=$(basename "$(dirname "$(dirname "$apk")")")
+            out="DownBolt-v${VERSION}-android-${abi}.apk"
+            cp "$apk" "$out"
+            gh release upload "v${VERSION}" "$out" --clobber
+          done
