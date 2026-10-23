@@ -102,7 +102,7 @@ jobs:
         run: |
           mkdir -p "$GITHUB_WORKSPACE/signing"
           echo "$ANDROID_KEYSTORE_B64" | base64 -d > "$GITHUB_WORKSPACE/signing/downbolt-release.p12"
-          cat > src-tauri/gen/android/keystore.properties <<EOF
+          cat > src-tauri/gen/android/key.properties <<EOF
           storeFile=$GITHUB_WORKSPACE/signing/downbolt-release.p12
           storePassword=$ANDROID_KEYSTORE_PASSWORD
           keyAlias=$ANDROID_KEY_ALIAS
@@ -117,7 +117,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=$(python3 -c "import json; print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
-          for apk in $(find src-tauri/gen/android/app/build/outputs/apk -name "*-release.apk"); do
+          APKS=$(find src-tauri/gen/android/app/build/outputs/apk -name "*.apk")
+          if [ -z "$APKS" ]; then echo "::error::هیچ APKای برای آپلود پیدا نشد"; exit 1; fi
+          echo "$APKS"
+          for apk in $APKS; do
             abi=$(basename "$(dirname "$(dirname "$apk")")")
             out="DownBolt-v${VERSION}-android-${abi}.apk"
             cp "$apk" "$out"
