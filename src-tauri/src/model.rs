@@ -38,9 +38,21 @@ pub struct DownloadItem {
 pub struct DmSettings {
     pub download_dir: String,
     /// سقف دانلودهای هم‌زمان
+    #[serde(default = "default_max_parallel")]
     pub max_parallel: u32,
+    /// سقف اتصال موازی برای هر دانلود (۱ تا ۱۶)
+    #[serde(default = "default_max_connections")]
+    pub max_connections: u32,
     /// سقف سرعت کلی به کیلوبایت‌برثانیه؛ ۰ = نامحدود
     pub speed_limit_kbps: u32,
+}
+
+fn default_max_connections() -> u32 {
+    8
+}
+
+fn default_max_parallel() -> u32 {
+    3
 }
 
 impl DmSettings {
@@ -48,6 +60,7 @@ impl DmSettings {
         Self {
             download_dir: default_dir,
             max_parallel: 3,
+            max_connections: default_max_connections(),
             speed_limit_kbps: 0,
         }
     }
@@ -141,5 +154,18 @@ mod tests {
     fn iso_known_date() {
         // 2026-10-23T01:40:44Z
         assert_eq!(iso_from_unix(1_792_719_644), "2026-10-23T01:40:44Z");
+    }
+
+    #[test]
+    fn settings_without_max_parallel_defaults_to_3() {
+        // رگرسیون بازبینی 0.4.0: payload فرانت بدون max_parallel نباید
+        // خطای missing field بدهد — serde default مقدار ۳ می‌گذارد.
+        let s: DmSettings = serde_json::from_str(
+            r#"{"download_dir":"/tmp/dl","max_connections":8,"speed_limit_kbps":0}"#,
+        )
+        .unwrap();
+        assert_eq!(s.max_parallel, 3);
+        assert_eq!(s.max_connections, 8);
+        assert_eq!(s.speed_limit_kbps, 0);
     }
 }

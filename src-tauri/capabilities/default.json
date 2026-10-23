@@ -1,1 +1,14 @@
-{"$schema": "../gen/schemas/desktop-schema.json", "description": "دسترسی‌های پیش‌فرض پنجره‌ی اصلی", "identifier": "default", "permissions": ["core:default", "dialog:default", "downbolt-install:default"], "windows": ["main"]}
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "description": "دسترسی‌های پیش‌فرض پنجره‌ی اصلی",
+  "identifier": "default",
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "downbolt-install:default",
+    "downbolt-install:allow-install-apk"
+  ],
+  "windows": [
+    "main"
+  ]
+}

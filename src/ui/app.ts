@@ -370,12 +370,16 @@ export function mountApp(root: HTMLElement): void {
 
   /* ── تنظیمات ── */
   const settingsMsg = $<HTMLElement>("#settingsMsg");
+  // آخرین تنظیمات خوانده‌شده از بک‌اند؛ فیلدهایی که فرم ندارد (مثل max_parallel)
+  // موقع ذخیره از همین‌جا حفظ می‌شوند تا قرارداد DmSettings نشکند.
+  let lastSettings: DmSettings | null = null;
   $("#settingsBtn").addEventListener("click", async () => {
     const opening = settingsPanel.hidden;
     settingsPanel.hidden = !opening;
     if (opening) {
       try {
         const s = await api.getSettings();
+        lastSettings = s;
         $<HTMLInputElement>("#setDir").value = s.download_dir;
         $<HTMLInputElement>("#setParallel").value = String(s.max_connections);
         $<HTMLInputElement>("#setSpeed").value = String(s.speed_limit_kbps);
@@ -398,6 +402,7 @@ export function mountApp(root: HTMLElement): void {
   $("#saveSettingsBtn").addEventListener("click", async () => {
     const settings: DmSettings = {
       download_dir: $<HTMLInputElement>("#setDir").value.trim(),
+      max_parallel: lastSettings?.max_parallel ?? 3,
       max_connections: Math.min(16, Math.max(1, Number($<HTMLInputElement>("#setParallel").value) || 8)),
       speed_limit_kbps: Math.max(0, Number($<HTMLInputElement>("#setSpeed").value) || 0),
     };
@@ -424,6 +429,11 @@ export function mountApp(root: HTMLElement): void {
   });
 
   /* ── به‌روزرسانی (موتور v2 — مثل شیرین‌حساب) ── */
+  // نصب آپدیت دو مسیر جدا دارد: ویندوز با هلپر (apply_update2) و اندروید با
+  // نصب‌کننده‌ی سیستم (پلاگین install_apk). مسیر را پلتفرم تعیین می‌کند، نه
+  // بودن یا نبودن مسیر فایل آماده — روی ویندوز ready_update_path نباید
+  // مسیر APK تلقی شود (باگ 0.2.0: خطای ACL پلاگین روی ویندوز).
+  const IS_ANDROID = /Android/i.test(navigator.userAgent);
   const updStatus = $<HTMLElement>("#updStatus");
   const updNotes = $<HTMLElement>("#updNotes");
   const updProgress = $<HTMLElement>("#updProgress");
@@ -481,7 +491,9 @@ export function mountApp(root: HTMLElement): void {
     updStatus.textContent = "در حال دانلود به‌روزرسانی…";
     try {
       await api.downloadUpdate();
-      const readyPath = await api.readyUpdatePath().catch(() => null);
+      const readyPath = IS_ANDROID
+        ? await api.readyUpdatePath().catch(() => null)
+        : null;
       updCancelBtn.hidden = true;
       if (readyPath) {
         updProgress.hidden = true;
@@ -515,7 +527,7 @@ export function mountApp(root: HTMLElement): void {
   updApplyBtn.addEventListener("click", async () => {
     const apkPath = updApplyBtn.dataset.apkPath;
     try {
-      if (apkPath) {
+      if (IS_ANDROID && apkPath) {
         await api.installApk(apkPath);
         updStatus.textContent = "نصب‌کننده‌ی سیستم باز شد؛ نصب را آنجا کامل کنید.";
       } else {
@@ -531,9 +543,11 @@ export function mountApp(root: HTMLElement): void {
     try {
       const path = await api.openUpdateFile();
       if (!path) return;
-      if (path.toLowerCase().endsWith(".apk")) {
+      if (path.toLowerCase().endsWith(".apk") && IS_ANDROID) {
         await api.installApk(path);
         updStatus.textContent = "نصب‌کننده‌ی سیستم باز شد؛ نصب را آنجا کامل کنید.";
+      } else if (path.toLowerCase().endsWith(".apk")) {
+        updStatus.textContent = "این فایل APK مخصوص اندروید است و روی این دستگاه نصب نمی‌شود.";
       } else if (
         confirm("بسته‌ی به‌روزرسانی نصب شود؟ برنامه بسته و نسخه‌ی تازه اجرا می‌شود.")
       ) {

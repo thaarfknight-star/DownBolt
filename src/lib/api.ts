@@ -36,6 +36,8 @@ export interface DownloadItem {
 
 export interface DmSettings {
   download_dir: string;
+  /** سقف دانلودهای هم‌زمان (سمت Rust هم serde default دارد) */
+  max_parallel: number;
   /** سقف اتصال موازی برای هر دانلود/هاست — بازه‌ی ۱ تا ۱۶، پیش‌فرض موتور ۸ (اسپک موتور §۴٫۳) */
   max_connections: number;
   /** سقف سرعت کلی به کیلوبایت‌برثانیه؛ ۰ = نامحدود */

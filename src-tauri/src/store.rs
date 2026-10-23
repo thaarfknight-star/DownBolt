@@ -4,7 +4,7 @@
 //!
 //! نکته‌ی لایه‌بندی: این فایل فقط «صف و تنظیمات و آفست کلی هر دانلود» را نگه
 //! می‌دارد. جزئیات داخلی موتور (بیت‌مپ بخش‌ها، ETag و…) طبق اسپک
-//! (docs/engine-spec.md بخش ۲ و ۵) در SQLite خود موتور می‌نشیند.
+//! (docs/engine-spec.md بخش ۲ و ۵) در فایل سایدکار JSON کنار فایل مقصد می‌نشیند.
 
 use crate::model::{DmSettings, DownloadRecord};
 use serde::{Deserialize, Serialize};

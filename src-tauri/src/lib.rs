@@ -11,7 +11,7 @@ mod model;
 mod store;
 mod updater;
 
-use engine::{EngineEvent, PlaceholderEngine};
+use engine::{EngineEvent, RealEngine};
 use manager::{AppliedEffect, DownloadManager};
 use model::{DmSettings, DownloadItem};
 use std::sync::mpsc;
@@ -173,7 +173,7 @@ pub fn run() {
             // نقطه‌ی اتصال موتور واقعی: پیاده‌سازی docs/engine-spec.md
             // (ایجنت موتور) این‌جا جای PlaceholderEngine می‌نشیند؛ هسته و
             // بقیه‌ی سیم‌کشی دست نمی‌خورند.
-            let engine = Arc::new(PlaceholderEngine);
+            let engine = Arc::new(RealEngine::new());
             let manager = DownloadManager::load(store_path, default_download_dir, engine, events_tx);
             app.manage(AppState {
                 manager: Mutex::new(manager),

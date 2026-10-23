@@ -227,11 +227,20 @@ jobs:
           gh release upload "v${VERSION}" dist-feed/*.zip --clobber
           # نکته: گرفتن ریلیز با تگ برای درفت‌ها 404 می‌دهد؛ از لیست پیدا می‌کنیم.
           REL_ID=$(gh api "repos/${{ github.repository }}/releases?per_page=20" | python3 -c "import json,sys; print([r['id'] for r in json.load(sys.stdin) if r['tag_name'] == 'v$VERSION'][0])")
-          curl -s -X PATCH \
+          # بدنه‌ی ریلیز = بخش همین نسخه از CHANGELOG_FA.md (قانون طه: هر تگ باید تغییراتش را بگوید)
+          python3 - "$VERSION" <<'PY' > /tmp/release-patch.json
+          import json, re, sys
+          ver = sys.argv[1]
+          text = open("CHANGELOG_FA.md", encoding="utf-8").read()
+          m = re.search(r"(?ms)^## " + re.escape(ver) + r"\b.*?(?=^## |\Z)", text)
+          notes = m.group(0).strip() if m else ("## " + ver)
+          print(json.dumps({"draft": False, "body": notes}, ensure_ascii=False))
+          PY
+          curl -s --fail -X PATCH \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/releases/${REL_ID}" \
-            -d '{"draft": false}' > /dev/null
+            -d @/tmp/release-patch.json > /dev/null
 
           # فید روی ریلیز غلتان update-feed
           if ! gh release view update-feed > /dev/null 2>&1; then

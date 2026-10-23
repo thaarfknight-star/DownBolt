@@ -32,6 +32,9 @@ pub struct DownloadManager {
     records: Vec<DownloadRecord>,
     settings: DmSettings,
     next_seq: u64,
+    /// شماره‌ی نسل جاری هر تسک؛ با هر start یکی بالا می‌رود و رویدادهای
+    /// موتور فقط وقتی اعمال می‌شوند که نسلشان همین باشد.
+    generations: std::collections::HashMap<String, u64>,
     engine: Arc<dyn DownloadEngine>,
     events_tx: Sender<EngineEvent>,
     store_path: PathBuf,
@@ -52,6 +55,7 @@ impl DownloadManager {
             records: data.records,
             settings: data.settings,
             next_seq: data.next_seq.max(1),
+            generations: std::collections::HashMap::new(),
             engine,
             events_tx,
             store_path,
@@ -177,10 +181,14 @@ impl DownloadManager {
         match evt {
             EngineEvent::Progress {
                 id,
+                generation,
                 downloaded,
                 total,
                 speed_bps,
             } => {
+                if self.generations.get(&id) != Some(&generation) {
+                    return AppliedEffect::Ignored;
+                }
                 let Some(rec) = self.records.iter_mut().find(|r| r.id == id) else {
                     return AppliedEffect::Ignored;
                 };
@@ -194,10 +202,22 @@ impl DownloadManager {
                 rec.speed = speed_bps;
                 AppliedEffect::ProgressOnly
             }
-            EngineEvent::Completed { id, total } => {
+            EngineEvent::Completed {
+                id,
+                generation,
+                total,
+            } => {
+                if self.generations.get(&id) != Some(&generation) {
+                    return AppliedEffect::Ignored;
+                }
                 let Some(idx) = self.records.iter().position(|r| r.id == id) else {
                     return AppliedEffect::Ignored;
                 };
+                // فقط تسکِ در حال دانلود می‌تواند کامل شود؛ رویدادِ همان نسل هم
+                // اگر بعد از مکث کاربر برسد نباید وضعیت مکث را override کند.
+                if self.records[idx].status != DownloadStatus::Downloading {
+                    return AppliedEffect::Ignored;
+                }
                 let rec = &mut self.records[idx];
                 rec.status = DownloadStatus::Completed;
                 rec.downloaded = total;
@@ -208,10 +228,21 @@ impl DownloadManager {
                 self.pump();
                 AppliedEffect::StateChanged
             }
-            EngineEvent::Failed { id, error } => {
+            EngineEvent::Failed {
+                id,
+                generation,
+                error,
+            } => {
+                if self.generations.get(&id) != Some(&generation) {
+                    return AppliedEffect::Ignored;
+                }
                 let Some(idx) = self.records.iter().position(|r| r.id == id) else {
                     return AppliedEffect::Ignored;
                 };
+                // خطای نسل جاری هم فقط روی تسکِ در حال دانلود اعمال می‌شود.
+                if self.records[idx].status != DownloadStatus::Downloading {
+                    return AppliedEffect::Ignored;
+                }
                 let rec = &mut self.records[idx];
                 rec.status = DownloadStatus::Error;
                 rec.error = Some(error);
@@ -267,11 +298,18 @@ impl DownloadManager {
         let rec = &mut self.records[idx];
         rec.status = DownloadStatus::Downloading;
         rec.error = None;
+        let generation = {
+            let g = self.generations.entry(rec.id.clone()).or_insert(0);
+            *g += 1;
+            *g
+        };
         let task = EngineTask {
             id: rec.id.clone(),
+            generation,
             url: rec.url.clone(),
             dest_path: PathBuf::from(&rec.dest_path),
             resume_from: rec.downloaded,
+            connections: self.settings.max_connections.clamp(1, 16),
             speed_limit_bps: self.settings.speed_limit_bps(),
         };
         match self.engine.start(task, self.events_tx.clone()) {
@@ -382,6 +420,7 @@ mod tests {
         mgr.set_settings(DmSettings {
             download_dir: "/tmp/downloads".into(),
             max_parallel,
+            max_connections: 8,
             speed_limit_kbps: 0,
         })
         .unwrap();
@@ -406,6 +445,7 @@ mod tests {
         // کامل‌شدن دومی با رویداد موتور
         let eff = mgr.apply_event(EngineEvent::Completed {
             id: b.id.clone(),
+            generation: 1,
             total: 500,
         });
         assert_eq!(eff, AppliedEffect::StateChanged);
@@ -444,6 +484,7 @@ mod tests {
         // پیشرفت ساختگی تا آفست برای resume ثبت شود
         mgr.apply_event(EngineEvent::Progress {
             id: a.id.clone(),
+            generation: 1,
             downloaded: 42,
             total: Some(100),
             speed_bps: 10,
