@@ -211,7 +211,8 @@ pub fn run() {
             });
 
             // آیکن سینی سیستم با منوی «نمایش / خروج» — دانلودها موقع
-            // مخفی‌بودن پنجره هم ادامه پیدا می‌کنند.
+            // مخفی‌بودن پنجره هم ادامه پیدا می‌کنند. (فقط دسکتاپ)
+            #[cfg(desktop)]
             {
                 use tauri::menu::{Menu, MenuItem};
                 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
