@@ -1,2 +1,95 @@
-# DownBolt
-DownBolt — دانلودمنیجر سریع برای اینترنت ناپایدار (Rust + Tauri)
+# DownBolt — دانلودمنیجر (Rust + Tauri 2)
+
+دانلودمنیجر دسکتاپ با هسته‌ی Rust و رابط Tauri 2. این سند نقشه‌ی اسکلت و
+هسته است؛ اسپک موتور دانلود در [docs/engine-spec.md](docs/engine-spec.md)
+و قرارداد فرانت در `src/lib/api.ts` زندگی می‌کند.
+
+## ساختار
+
+```
+src/                    فرانت (TypeScript) — قرارداد IPC در src/lib/api.ts
+src-tauri/
+  build.rs              مانیفست ویندوز: Common-Controls 6.0 + asInvoker
+  tauri.conf.json       کانفیگ Tauri (پنجره، باندل NSIS)
+  capabilities/         دسترسی‌های پنجره‌ی اصلی
+  src/
+    main.rs             ورودی باینری (فقط run)
+    lib.rs              سیم‌کشی Tauri: کامندها، حلقه‌ی رویداد، پلاگین‌ها
+    manager.rs          هسته: صف، ماشین وضعیت، زمان‌بندی موازی، resume
+    model.rs            مدل داده مطابق قرارداد فرانت (+ زمان ISO بدون وابستگی)
+    store.rs            ذخیره‌ی JSON اتمیک وضعیت (state.json در app data)
+    engine.rs           نقطه‌ی اتصال موتور: trait DownloadEngine
+docs/engine-spec.md     اسپک موتور دانلود (ایجنت موتور)
+```
+
+## هسته (manager.rs)
+
+- ماشین وضعیت هر دانلود: `queued ⇄ downloading ⇄ paused`،
+  `downloading → completed | error` و `error → queued` با resume دستی.
+- زمان‌بندی: شروع تسک‌های صف به ترتیب ورود تا سقف `max_parallel` تنظیمات؛
+  با مکث/کامل/خطای هر تسک، جای آن را تسک بعدی می‌گیرد.
+- ذخیره‌ی وضعیت: بعد از هر تغییر وضعیت، فایل `state.json` در پوشه‌ی داده‌ی
+  برنامه به‌صورت اتمیک (tmp + rename) بازنویسی می‌شود؛ پیشرفت‌های حین
+  دانلود حداکثر هر ۱ ثانیه ذخیره می‌شوند.
+- **Resume بعد از بسته‌شدن برنامه:** موقع بالا آمدن، تسک‌هایی که «در حال
+  دانلود» ذخیره شده بودند به «مکث» برمی‌گردند و آفست دانلودشده‌شان حفظ
+  می‌شود؛ resume همان تسک را با `resume_from` به موتور می‌دهد.
+- مقصد تکراری بین تسک‌ها رد می‌شود (قفل مسیر مقصد — اسپک بخش ۱۱).
+
+## نقطه‌ی اتصال موتور (engine.rs)
+
+هسته فقط trait `DownloadEngine` را می‌شناسد:
+
+- `start(EngineTask, Sender<EngineEvent>)` — شروع/ادامه با URL، مسیر
+  مقصد، آفست resume و سقف سرعت؛ رویدادها: `Progress | Completed | Failed`.
+- `pause(id)` / `cancel(id)` / `set_speed_limit(Option<u64>)`.
+- وضعیت‌های داخلی موتور در اسپک (probing/retrying/verifying) به هسته
+  نمی‌رسند؛ تا رویداد پایانی نیامده تسک «در حال دانلود» است.
+
+فعلاً `PlaceholderEngine` وصل است که هر شروع را با خطای شفاف رد می‌کند تا
+ماشین وضعیت و UI قابل تست باشد. پیاده‌سازی واقعی (tokio + reqwest +
+SQLite برای بیت‌مپ بخش‌ها و ETag، طبق اسپک) جای همین placeholder در
+`lib.rs` می‌نشیند و هیچ فایل دیگری دست نمی‌خورد.
+
+لایه‌بندی ذخیره: صف/تنظیمات/آفست کلی در `state.json` هسته است؛ جزئیات
+داخلی موتور (بازه‌های کامل‌شده، فراداده‌ی سرور) در SQLite خود موتور
+می‌ماند (اسپک بخش ۲ و ۵).
+
+## کامندها و رویداد (قرارداد src/lib/api.ts)
+
+`list_downloads`، `add_download({url})`، `pause_download({id})`،
+`resume_download({id})`، `remove_download({id, deleteFile})`،
+`get_settings` / `set_settings({settings})`، `pick_download_dir`
+(دیالوگ پوشه)، `read_clipboard` (متن کلیپ‌بورد).
+رویداد `download-progress` با اسنپ‌شات کامل لیست منتشر می‌شود: فوری روی
+تغییر وضعیت و حداکثر هر ۲۵۰ms برای پیشرفت.
+
+## چندسکویی (ویندوز + اندروید)
+
+هسته از اول platform-neutral نگه داشته شده تا نسخه‌ی اندروید روی همین کد
+ساخته شود:
+
+- ماژول‌های هسته (`model` / `store` / `manager` / `engine`) فقط std و
+  serde دارند؛ هیچ API ویندوزی یا وابستگی سکویی در آن‌ها نیست و برای
+  تارگت `aarch64-linux-android` هم cargo check سبز است.
+- همه‌ی مسیرهای فایل فقط از APIهای Tauri می‌آیند
+  (`app.path().app_data_dir()` برای state.json و `download_dir()` برای
+  پوشه‌ی دانلود پیش‌فرض) که روی اندروید هم معادل خودشان را دارند.
+- تنها بخش‌های وابسته به سکو پشت cfg جدا شده‌اند: مانیفست ویندوز در
+  `build.rs` ‏(#[cfg(windows)]) و انتخاب‌گر پوشه در `lib.rs` — پلاگین
+  دیالوگ انتخاب پوشه را فقط روی دسکتاپ دارد، پس روی موبایل کامند
+  `pick_download_dir` مقدار None می‌دهد و پوشه‌ی پیش‌فرض Tauri می‌ماند.
+- قرارداد trait موتور هم سکویی فرض نمی‌کند؛ پیاده‌سازی موتور (اسپک)
+  باید همین قانون را نگه دارد: مسیر فقط از هسته، بدون API سکویی مستقیم.
+
+## توسعه
+
+```bash
+npm install
+npm run tauri dev     # اجرای توسعه
+cargo check           # در src-tauri — چک سریع هسته
+cargo test            # در src-tauri — تست‌های هسته (صف/ذخیره/زمان)
+```
+
+نام و برند (DownBolt) و آیکون‌ها از پوشه‌ی `branding/` آمده‌اند و موقت‌اند
+تا نهایی‌شدن اسم محصول.

@@ -1,0 +1,474 @@
+//! مدیر دانلودها (هسته): صف، ماشین وضعیت، زمان‌بندی شروع تسک‌ها تا سقف
+//! موازی، و ذخیره‌ی وضعیت برای resume بعد از بسته‌شدن برنامه.
+//!
+//! ماشین وضعیت هر دانلود:
+//!   queued ⇄ downloading ⇄ paused
+//!   downloading → completed | error
+//!   error → queued (با resume دستی)
+//! بعد از ری‌استارت برنامه، هر تسکی که «در حال دانلود» ذخیره شده بود به
+//! «مکث» برمی‌گردد (دانلود خودکار شروع نمی‌شود) و resume آن را از همان
+//! آفست دانلودشده ادامه می‌دهد.
+
+use crate::engine::{DownloadEngine, EngineEvent, EngineTask};
+use crate::model::{now_iso, DmSettings, DownloadItem, DownloadRecord, DownloadStatus};
+use crate::store::{self, StoreData};
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::Sender;
+use std::sync::Arc;
+
+/// نتیجه‌ی اعمال یک رویداد موتور — لایه‌ی اتصال (lib.rs) با آن تصمیم
+/// می‌گیرد انتشار به UI و ذخیره روی دیسک را فوری انجام دهد یا throttle کند.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppliedEffect {
+    /// وضعیت عوض شد (کامل/خطا/…): ذخیره و انتشار فوری.
+    StateChanged,
+    /// فقط اعداد پیشرفت جلو رفتند: ذخیره حداکثر هر ۱ ثانیه، انتشار هر ۲۵۰ms.
+    ProgressOnly,
+    /// رویداد ربطی به وضعیت فعلی نداشت (تسک حذف شده یا وضعیت ناسازگار).
+    Ignored,
+}
+
+pub struct DownloadManager {
+    records: Vec<DownloadRecord>,
+    settings: DmSettings,
+    next_seq: u64,
+    engine: Arc<dyn DownloadEngine>,
+    events_tx: Sender<EngineEvent>,
+    store_path: PathBuf,
+}
+
+impl DownloadManager {
+    /// ساخت مدیر با وضعیت ذخیره‌شده (اگر بود). دانلودهای نیمه‌کاره‌ی
+    /// اجرای قبل به «مکث» نرمال می‌شوند؛ سرعت لحظه‌ای هم صفر می‌شود.
+    pub fn load(
+        store_path: PathBuf,
+        default_download_dir: String,
+        engine: Arc<dyn DownloadEngine>,
+        events_tx: Sender<EngineEvent>,
+    ) -> Self {
+        let data = store::load(&store_path)
+            .unwrap_or_else(|| StoreData::new(default_download_dir));
+        let mut mgr = Self {
+            records: data.records,
+            settings: data.settings,
+            next_seq: data.next_seq.max(1),
+            engine,
+            events_tx,
+            store_path,
+        };
+        for rec in &mut mgr.records {
+            if rec.status == DownloadStatus::Downloading {
+                rec.status = DownloadStatus::Paused;
+            }
+            rec.speed = 0;
+        }
+        mgr
+    }
+
+    pub fn list(&self) -> Vec<DownloadItem> {
+        self.records.iter().map(|r| r.to_item()).collect()
+    }
+
+    pub fn settings(&self) -> DmSettings {
+        self.settings.clone()
+    }
+
+    /// افزودن دانلود تازه از روی URL؛ نام فایل و مسیر مقصد از URL و پوشه‌ی
+    /// دانلود تنظیمات درمی‌آید. مقصد تکراری بین تسک‌های موجود رد می‌شود
+    /// (اسپک موتور، بخش ۱۱: قفل مسیر مقصد).
+    pub fn add(&mut self, url: &str) -> Result<DownloadItem, String> {
+        let url = url.trim();
+        if url.is_empty() {
+            return Err("نشانی دانلود خالی است.".into());
+        }
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            return Err("نشانی باید با http یا https شروع شود.".into());
+        }
+        let file_name = file_name_from_url(url);
+        let dest = Path::new(&self.settings.download_dir).join(&file_name);
+        let dest_str = dest.to_string_lossy().to_string();
+        if self.records.iter().any(|r| r.dest_path == dest_str) {
+            return Err("دانلودی با همین فایل مقصد در فهرست وجود دارد.".into());
+        }
+        let id = format!("dl-{}", self.next_seq);
+        self.next_seq += 1;
+        let rec = DownloadRecord {
+            id: id.clone(),
+            url: url.to_string(),
+            file_name,
+            dest_path: dest_str,
+            size: None,
+            downloaded: 0,
+            speed: 0,
+            status: DownloadStatus::Queued,
+            error: None,
+            created_at: now_iso(),
+        };
+        self.records.push(rec);
+        self.persist()?;
+        self.pump();
+        Ok(self
+            .records
+            .iter()
+            .find(|r| r.id == id)
+            .expect("تازه ساخته شده")
+            .to_item())
+    }
+
+    /// مکث: فقط از وضعیت «در حال دانلود».
+    pub fn pause(&mut self, id: &str) -> Result<(), String> {
+        let idx = self.index_of(id)?;
+        if self.records[idx].status != DownloadStatus::Downloading {
+            return Ok(()); // مکثِ تسکِ درحال‌دانلودنبوده اثری ندارد
+        }
+        self.engine.pause(id)?;
+        let rec = &mut self.records[idx];
+        rec.status = DownloadStatus::Paused;
+        rec.speed = 0;
+        self.persist()?;
+        self.pump(); // جای خالی‌شده را تسک بعدی صف می‌گیرد
+        Ok(())
+    }
+
+    /// ادامه: از «مکث» یا «خطا» به صف برمی‌گردد و اگر ظرفیت بود شروع می‌شود.
+    pub fn resume(&mut self, id: &str) -> Result<(), String> {
+        let idx = self.index_of(id)?;
+        match self.records[idx].status {
+            DownloadStatus::Paused | DownloadStatus::Error => {
+                let rec = &mut self.records[idx];
+                rec.status = DownloadStatus::Queued;
+                rec.error = None;
+                self.persist()?;
+                self.pump();
+                Ok(())
+            }
+            _ => Ok(()), // کامل/در صف/در حال دانلود: چیزی برای ادامه نیست
+        }
+    }
+
+    /// حذف تسک از فهرست؛ اگر در حال دانلود بود اول لغو می‌شود.
+    /// delete_file=true فایل مقصد روی دیسک را هم پاک می‌کند.
+    pub fn remove(&mut self, id: &str, delete_file: bool) -> Result<(), String> {
+        let idx = self.index_of(id)?;
+        let rec = self.records.remove(idx);
+        if rec.status == DownloadStatus::Downloading {
+            let _ = self.engine.cancel(id);
+        }
+        if delete_file {
+            let _ = std::fs::remove_file(&rec.dest_path); // نبودنش خطا نیست
+        }
+        self.persist()?;
+        self.pump();
+        Ok(())
+    }
+
+    pub fn set_settings(&mut self, settings: DmSettings) -> Result<(), String> {
+        let mut settings = settings;
+        settings.max_parallel = settings.max_parallel.clamp(1, 32);
+        self.settings = settings;
+        self.engine.set_speed_limit(self.settings.speed_limit_bps());
+        self.persist()?;
+        self.pump(); // اگر سقف موازی بالا رفت، تسک‌های صف شروع می‌شوند
+        Ok(())
+    }
+
+    /// اعمال رویداد موتور روی وضعیت تسک.
+    pub fn apply_event(&mut self, evt: EngineEvent) -> AppliedEffect {
+        match evt {
+            EngineEvent::Progress {
+                id,
+                downloaded,
+                total,
+                speed_bps,
+            } => {
+                let Some(rec) = self.records.iter_mut().find(|r| r.id == id) else {
+                    return AppliedEffect::Ignored;
+                };
+                if rec.status != DownloadStatus::Downloading {
+                    return AppliedEffect::Ignored;
+                }
+                rec.downloaded = downloaded;
+                if total.is_some() {
+                    rec.size = total;
+                }
+                rec.speed = speed_bps;
+                AppliedEffect::ProgressOnly
+            }
+            EngineEvent::Completed { id, total } => {
+                let Some(idx) = self.records.iter().position(|r| r.id == id) else {
+                    return AppliedEffect::Ignored;
+                };
+                let rec = &mut self.records[idx];
+                rec.status = DownloadStatus::Completed;
+                rec.downloaded = total;
+                rec.size = Some(total);
+                rec.speed = 0;
+                rec.error = None;
+                let _ = self.persist();
+                self.pump();
+                AppliedEffect::StateChanged
+            }
+            EngineEvent::Failed { id, error } => {
+                let Some(idx) = self.records.iter().position(|r| r.id == id) else {
+                    return AppliedEffect::Ignored;
+                };
+                let rec = &mut self.records[idx];
+                rec.status = DownloadStatus::Error;
+                rec.error = Some(error);
+                rec.speed = 0;
+                let _ = self.persist();
+                self.pump();
+                AppliedEffect::StateChanged
+            }
+        }
+    }
+
+    /// ذخیره‌ی فوری وضعیت فعلی (برای رویدادهای پیشرفتِ throttle‌شده و
+    /// خاموش‌شدن تمیز؛ صدا زدن اضافه‌اش ارزان و بی‌ضرر است).
+    pub fn persist(&self) -> Result<(), String> {
+        let data = StoreData {
+            version: store::STORE_VERSION,
+            next_seq: self.next_seq,
+            settings: self.settings.clone(),
+            records: self.records.clone(),
+        };
+        store::save(&self.store_path, &data)
+    }
+
+    fn index_of(&self, id: &str) -> Result<usize, String> {
+        self.records
+            .iter()
+            .position(|r| r.id == id)
+            .ok_or_else(|| "دانلودی با این شناسه پیدا نشد.".to_string())
+    }
+
+    /// شروع تسک‌های صف تا سقف موازی تنظیمات (به ترتیب ورود به صف).
+    fn pump(&mut self) {
+        let cap = self.settings.max_parallel.max(1) as usize;
+        let mut active = self
+            .records
+            .iter()
+            .filter(|r| r.status == DownloadStatus::Downloading)
+            .count();
+        let mut idx = 0;
+        while active < cap && idx < self.records.len() {
+            if self.records[idx].status == DownloadStatus::Queued {
+                self.start_at(idx);
+                if self.records[idx].status == DownloadStatus::Downloading {
+                    active += 1;
+                }
+            }
+            idx += 1;
+        }
+    }
+
+    /// شروع یک تسک مشخص با موتور؛ خطای موتور = وضعیت خطا روی همان تسک.
+    fn start_at(&mut self, idx: usize) {
+        let rec = &mut self.records[idx];
+        rec.status = DownloadStatus::Downloading;
+        rec.error = None;
+        let task = EngineTask {
+            id: rec.id.clone(),
+            url: rec.url.clone(),
+            dest_path: PathBuf::from(&rec.dest_path),
+            resume_from: rec.downloaded,
+            speed_limit_bps: self.settings.speed_limit_bps(),
+        };
+        match self.engine.start(task, self.events_tx.clone()) {
+            Ok(()) => {}
+            Err(e) => {
+                let rec = &mut self.records[idx];
+                rec.status = DownloadStatus::Error;
+                rec.error = Some(e);
+                rec.speed = 0;
+            }
+        }
+        let _ = self.persist();
+    }
+}
+
+/// نام فایل از انتهای مسیر URL (بدون کوئری/فرگمنت)، با percent-decode.
+/// اگر نامی درنیامد، «download» برمی‌گردد.
+pub fn file_name_from_url(url: &str) -> String {
+    let no_query = url.split(['?', '#']).next().unwrap_or(url);
+    let last = no_query.rsplit('/').next().unwrap_or("");
+    let decoded = percent_decode(last);
+    let name = decoded.trim();
+    if name.is_empty() {
+        "download".to_string()
+    } else {
+        name.to_string()
+    }
+}
+
+/// percent-decode ساده برای نام فایل‌ها (بایت‌ها UTF-8 فرض می‌شوند).
+/// روی بایت‌ها کار می‌کند تا «٪» کنار نویسه‌های چندبایتی (مثلاً فارسیِ
+/// encodeنشده در URL) باعث panic برش رشته نشود.
+fn percent_decode(s: &str) -> String {
+    fn hex_val(b: u8) -> Option<u8> {
+        match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
+        }
+    }
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                out.push(h * 16 + l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::DownloadEngine;
+    use std::sync::Mutex;
+
+    struct FakeEngine {
+        started: Mutex<Vec<String>>,
+        fail: bool,
+    }
+
+    impl DownloadEngine for FakeEngine {
+        fn start(&self, task: EngineTask, _events: Sender<EngineEvent>) -> Result<(), String> {
+            if self.fail {
+                return Err("خطای ساختگی موتور".into());
+            }
+            self.started.lock().unwrap().push(task.id);
+            Ok(())
+        }
+        fn pause(&self, _id: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn cancel(&self, _id: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    fn manager_with(
+        max_parallel: u32,
+        fail: bool,
+    ) -> (DownloadManager, PathBuf, Arc<FakeEngine>) {
+        let dir = std::env::temp_dir().join(format!(
+            "dm-mgr-test-{}-{}",
+            std::process::id(),
+            max_parallel
+        ));
+        let store_path = dir.join("state.json");
+        let _ = std::fs::remove_dir_all(&dir);
+        let engine = Arc::new(FakeEngine {
+            started: Mutex::new(Vec::new()),
+            fail,
+        });
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut mgr = DownloadManager::load(
+            store_path.clone(),
+            "/tmp/downloads".into(),
+            engine.clone(),
+            tx,
+        );
+        mgr.set_settings(DmSettings {
+            download_dir: "/tmp/downloads".into(),
+            max_parallel,
+            speed_limit_kbps: 0,
+        })
+        .unwrap();
+        (mgr, dir, engine)
+    }
+
+    #[test]
+    fn queue_respects_parallel_cap() {
+        let (mut mgr, dir, engine) = manager_with(1, false);
+        let a = mgr.add("https://ex.com/a.zip").unwrap();
+        let b = mgr.add("https://ex.com/b.zip").unwrap();
+        assert_eq!(a.status, DownloadStatus::Downloading);
+        assert_eq!(b.status, DownloadStatus::Queued);
+        assert_eq!(engine.started.lock().unwrap().len(), 1);
+
+        // مکث اولی → دومی شروع می‌شود
+        mgr.pause(&a.id).unwrap();
+        let items = mgr.list();
+        assert_eq!(items[0].status, DownloadStatus::Paused);
+        assert_eq!(items[1].status, DownloadStatus::Downloading);
+
+        // کامل‌شدن دومی با رویداد موتور
+        let eff = mgr.apply_event(EngineEvent::Completed {
+            id: b.id.clone(),
+            total: 500,
+        });
+        assert_eq!(eff, AppliedEffect::StateChanged);
+        assert_eq!(mgr.list()[1].status, DownloadStatus::Completed);
+        assert_eq!(mgr.list()[1].downloaded, 500);
+
+        // ادامه‌ی اولی از همان آفست
+        mgr.resume(&a.id).unwrap();
+        assert_eq!(mgr.list()[0].status, DownloadStatus::Downloading);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn duplicate_destination_rejected() {
+        let (mut mgr, dir, _e) = manager_with(3, false);
+        mgr.add("https://ex.com/same.zip").unwrap();
+        let err = mgr.add("https://other.com/same.zip").unwrap_err();
+        assert!(err.contains("مقصد"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn engine_start_failure_marks_error_and_resume_retries() {
+        let (mut mgr, dir, _e) = manager_with(2, true);
+        let a = mgr.add("https://ex.com/a.zip").unwrap();
+        assert_eq!(a.status, DownloadStatus::Error);
+        assert!(a.error.is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reload_normalizes_downloading_to_paused() {
+        let (mut mgr, dir, _e) = manager_with(2, false);
+        let a = mgr.add("https://ex.com/a.zip").unwrap();
+        assert_eq!(a.status, DownloadStatus::Downloading);
+        // پیشرفت ساختگی تا آفست برای resume ثبت شود
+        mgr.apply_event(EngineEvent::Progress {
+            id: a.id.clone(),
+            downloaded: 42,
+            total: Some(100),
+            speed_bps: 10,
+        });
+        mgr.persist().unwrap();
+        drop(mgr);
+
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let engine = Arc::new(FakeEngine {
+            started: Mutex::new(Vec::new()),
+            fail: false,
+        });
+        let mgr2 = DownloadManager::load(dir.join("state.json"), "/tmp/x".into(), engine, tx);
+        let item = &mgr2.list()[0];
+        assert_eq!(item.status, DownloadStatus::Paused);
+        assert_eq!(item.downloaded, 42);
+        assert_eq!(item.size, Some(100));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_name_cases() {
+        assert_eq!(file_name_from_url("https://ex.com/a/b/file.zip?x=1"), "file.zip");
+        assert_eq!(file_name_from_url("https://ex.com/a/"), "download");
+        assert_eq!(file_name_from_url("https://ex.com/%D9%81%D8%A7%DB%8C%D9%84.zip"), "فایل.zip");
+        assert_eq!(file_name_from_url("https://ex.com/a%20b.mp4"), "a b.mp4");
+    }
+}

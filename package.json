@@ -1,0 +1,1 @@
+{"dependencies":{"@tauri-apps/api":"^2"},"devDependencies":{"@tauri-apps/cli":"^2","typescript":"^5","vite":"^6"},"name":"download-manager","private":true,"scripts":{"build":"vite build","dev":"vite","tauri":"tauri"},"type":"module","version":"0.1.0"}

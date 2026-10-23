@@ -1,0 +1,106 @@
+name: Build (Rust + Tauri)
+
+# دانلودمنیجر — پایپ‌لاین بیلد ویندوز + اندروید روی یک ریپو و یک ریلیز (الگو: LagSlice-RS)
+# TODO بعد از نهایی‌شدن اسم محصول: tagName و releaseName را با نام محصول شخصی‌سازی کن.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # اجباری (درس LagSlice): نصب وابستگی‌های فرانت/CLI حتماً قبل از tauri-action
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Build and publish draft release (NSIS Setup)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: .
+          tagName: v__VERSION__
+          releaseName: "DownBolt v__VERSION__"
+          releaseBody: "فایل Setup ویندوز (NSIS) و APK اندروید در فایل‌های زیر هستند."
+          releaseDraft: true
+          prerelease: false
+
+  # اندروید روی همان ریپو؛ APK به همان ریلیزی می‌رود که جاب ویندوز ساخته است.
+  # امضا: فعلاً بیلد debug (امضای خودکار با دیباگ‌کی) — برای انتشار نهایی باید
+  # کی‌استور واقعی تعریف و بیلد release امضاشده جایگزین شود.
+  build-android:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: |
+          sdkmanager "ndk;27.0.12077973"
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> "$GITHUB_ENV"
+
+      - name: Setup Rust (Android targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Init Android project
+        run: npx tauri android init
+
+      - name: Build Android APK (debug-signed)
+        run: npx tauri android build --debug --apk
+
+      - name: Upload APK to the same release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(python3 -c "import json; print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+          cp src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk "app-v${VERSION}-android.apk"
+          gh release upload "v${VERSION}" "app-v${VERSION}-android.apk" --clobber
