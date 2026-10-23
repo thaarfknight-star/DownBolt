@@ -71,7 +71,9 @@ jobs:
 
       - name: Install Android NDK
         run: |
-          sdkmanager "ndk;27.0.12077973"
+          SDKMANAGER=$(ls "$ANDROID_SDK_ROOT"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -1)
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          yes | "$SDKMANAGER" "ndk;27.0.12077973"
           echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> "$GITHUB_ENV"
           echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> "$GITHUB_ENV"
 
