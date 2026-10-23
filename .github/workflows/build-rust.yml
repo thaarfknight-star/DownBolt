@@ -225,7 +225,8 @@ jobs:
 
           # آپلود بسته‌های آپدیت روی ریلیز نسخه و انتشار ریلیز
           gh release upload "v${VERSION}" dist-feed/*.zip --clobber
-          REL_ID=$(gh api "repos/${{ github.repository }}/releases/tags/v${VERSION}" --jq .id)
+          # نکته: گرفتن ریلیز با تگ برای درفت‌ها 404 می‌دهد؛ از لیست پیدا می‌کنیم.
+          REL_ID=$(gh api "repos/${{ github.repository }}/releases?per_page=20" | python3 -c "import json,sys; print([r['id'] for r in json.load(sys.stdin) if r['tag_name'] == 'v$VERSION'][0])")
           curl -s -X PATCH \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
