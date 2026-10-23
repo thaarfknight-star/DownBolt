@@ -196,3 +196,5 @@ body {
 .upd-progress { height: 8px; border-radius: 99px; background: rgba(148, 163, 184, 0.18); overflow: hidden; margin: 10px 0; }
 .upd-bar { height: 100%; width: 0%; border-radius: 99px; background: linear-gradient(90deg, #22d3ee, #818cf8, #e879f9); transition: width 0.25s ease; }
 .upd-notes { white-space: pre-line; font-size: 13px; color: var(--muted); }
+.tray-field { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.tray-field input { width: 20px; height: 20px; accent-color: #22d3ee; flex: none; }

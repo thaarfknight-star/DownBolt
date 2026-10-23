@@ -126,6 +126,10 @@ export function mountApp(root: HTMLElement): void {
           <input id="setSpeed" type="number" min="0" step="64" />
         </label>
       </div>
+      <label class="field tray-field">
+        <span>بستن به سینی سیستم (با بستن پنجره، برنامه در پس‌زمینه می‌ماند و دانلودها ادامه پیدا می‌کنند)</span>
+        <input id="setTrayDm" type="checkbox" checked />
+      </label>
       <div class="settings-actions">
         <button id="saveSettingsBtn" class="btn primary" type="button">ذخیره تنظیمات</button>
         <span id="settingsMsg" class="settings-msg"></span>
@@ -409,6 +413,16 @@ export function mountApp(root: HTMLElement): void {
   void onProgressSnapshot(applySnapshot).catch(() => undefined);
   void refresh();
   window.setInterval(() => void refresh(), 1000);
+  /* ── بستن به سینی سیستم ── */
+  const trayBox = $<HTMLInputElement>("#setTrayDm");
+  const TRAY_KEY = "dm_close_to_tray";
+  trayBox.checked = localStorage.getItem(TRAY_KEY) !== "0";
+  void api.setCloseToTray(trayBox.checked).catch(() => {});
+  trayBox.addEventListener("change", () => {
+    localStorage.setItem(TRAY_KEY, trayBox.checked ? "1" : "0");
+    void api.setCloseToTray(trayBox.checked).catch(() => {});
+  });
+
   /* ── به‌روزرسانی (موتور v2 — مثل شیرین‌حساب) ── */
   const updStatus = $<HTMLElement>("#updStatus");
   const updNotes = $<HTMLElement>("#updNotes");

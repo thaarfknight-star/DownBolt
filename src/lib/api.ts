@@ -76,6 +76,8 @@ export const api = {
   getUpdateReport: (): Promise<UpdateReport> => invoke("get_update_report"),
   installApk: (path: string): Promise<void> =>
     invoke("plugin:downbolt-install|install_apk", { path }),
+  setCloseToTray: (enabled: boolean): Promise<void> =>
+    invoke("set_close_to_tray", { enabled }),
   getSettings: (): Promise<DmSettings> => invoke("get_settings"),
   setSettings: (settings: DmSettings): Promise<void> => invoke("set_settings", { settings }),
   pickDownloadDir: (): Promise<string | null> => invoke("pick_download_dir"),

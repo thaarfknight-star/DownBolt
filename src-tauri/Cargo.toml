@@ -1,6 +1,6 @@
 [package]
 name = "download-manager"
-version = "0.2.0"
+version = "0.3.0"
 description = "DownBolt — دانلودمنیجر دسکتاپ (Rust + Tauri)"
 edition = "2021"
 
@@ -12,7 +12,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-downbolt-install = { path = "plugins/downbolt-install" }

@@ -26,6 +26,15 @@ pub struct AppState {
     manager: Mutex<DownloadManager>,
 }
 
+/// «بستن به سینی سیستم» — پیش‌فرض روشن؛ فرانت از تنظیمات کاربر پرش می‌کند.
+pub struct TrayState(pub Mutex<bool>);
+
+/// تنظیم «بستن به سینی سیستم» از فرانت.
+#[tauri::command]
+fn set_close_to_tray(state: tauri::State<TrayState>, enabled: bool) {
+    *state.0.lock().unwrap() = enabled;
+}
+
 /// انتشار اسنپ‌شات کامل لیست به فرانت (رویداد download-progress در قرارداد).
 fn emit_snapshot(app: &AppHandle, mgr: &DownloadManager) {
     let _ = app.emit("download-progress", mgr.list());
@@ -142,6 +151,7 @@ pub fn run() {
     updater::cleanup_old_files();
 
     tauri::Builder::default()
+        .manage(TrayState(Mutex::new(true)))
         .manage(updater::UpdateV2State::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -200,7 +210,59 @@ pub fn run() {
                 }
             });
 
+            // آیکن سینی سیستم با منوی «نمایش / خروج» — دانلودها موقع
+            // مخفی‌بودن پنجره هم ادامه پیدا می‌کنند.
+            {
+                use tauri::menu::{Menu, MenuItem};
+                use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+                use tauri::Manager;
+                let show_item = MenuItem::with_id(app, "show", "نمایش DownBolt", true, None::<&str>)?;
+                let quit_item = MenuItem::with_id(app, "quit", "خروج", true, None::<&str>)?;
+                let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+                let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?;
+                TrayIconBuilder::with_id("main-tray")
+                    .icon(icon)
+                    .menu(&menu)
+                    .show_menu_on_left_click(false)
+                    .on_menu_event(|app, event| match event.id.as_ref() {
+                        "show" => {
+                            if let Some(w) = app.get_webview_window("main") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                        "quit" => app.exit(0),
+                        _ => {}
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            let app = tray.app_handle();
+                            if let Some(w) = app.get_webview_window("main") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                    })
+                    .build(app)?;
+            }
+
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // بستن به سینی: اگر تنظیم روشن است، بستن پنجره فقط مخفی‌اش می‌کند.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                use tauri::Manager;
+                let state = window.state::<TrayState>();
+                if *state.0.lock().unwrap() {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             list_downloads,
@@ -212,6 +274,7 @@ pub fn run() {
             set_settings,
             pick_download_dir,
             read_clipboard,
+            set_close_to_tray,
             updater::check_update2,
             updater::download_update2,
             updater::cancel_update_download2,
