@@ -55,7 +55,7 @@ class InstallPlugin(private val activity: Activity) : Plugin(activity) {
             val file = File(args.path)
             val uri: Uri = FileProvider.getUriForFile(
                 activity,
-                activity.packageName + ".fileprovider",
+                activity.packageName + ".downbolt-fileprovider",
                 file
             )
             val intent = Intent(Intent.ACTION_VIEW).apply {
@@ -199,7 +199,7 @@ class InstallPlugin(private val activity: Activity) : Plugin(activity) {
         if (raw != null && raw.startsWith("content://")) return Uri.parse(raw)
         return FileProvider.getUriForFile(
             activity,
-            activity.packageName + ".fileprovider",
+            activity.packageName + ".downbolt-fileprovider",
             File(args.path)
         )
     }
