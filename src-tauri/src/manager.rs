@@ -152,15 +152,36 @@ impl DownloadManager {
 
     /// حذف تسک از فهرست؛ اگر در حال دانلود بود اول لغو می‌شود.
     /// delete_file=true فایل مقصد روی دیسک را هم پاک می‌کند.
+    /// حذف تسک از فهرست؛ موتور اول کامل لغو و نخش join می‌شود تا موقع
+    /// پاک‌کردن فایل‌ها هیچ نخی رویشان ننویسد.
+    /// delete_file=true یعنی «حذف از دیسک»: فایل مقصد + سایدکار و فایل موقت
+    /// دانلود ناقص هم پاک می‌شوند. اگر پاک‌کردن فایلی ناموفق بود، رکورد در
+    /// فهرست می‌ماند (و اگر در حال دانلود بود مکث می‌شود) تا کاربر دوباره
+    /// تلاش کند و حذف نصفه‌کاره بی‌صدا رد نشود.
     pub fn remove(&mut self, id: &str, delete_file: bool) -> Result<(), String> {
         let idx = self.index_of(id)?;
-        let rec = self.records.remove(idx);
-        if rec.status == DownloadStatus::Downloading {
-            let _ = self.engine.cancel(id);
-        }
+        let _ = self.engine.cancel(id);
         if delete_file {
-            let _ = std::fs::remove_file(&rec.dest_path); // نبودنش خطا نیست
+            let dest = PathBuf::from(&self.records[idx].dest_path);
+            let mut targets = vec![dest.clone()];
+            targets.extend(crate::engine::sidecar_files(&dest));
+            for t in targets {
+                match std::fs::remove_file(&t) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => {
+                        let rec = &mut self.records[idx];
+                        if rec.status == DownloadStatus::Downloading {
+                            rec.status = DownloadStatus::Paused;
+                            rec.speed = 0;
+                        }
+                        let _ = self.persist();
+                        return Err(format!("پاک‌کردن فایل «{}» ناموفق بود: {e}", t.display()));
+                    }
+                }
+            }
         }
+        self.records.remove(idx);
         self.persist()?;
         self.pump();
         Ok(())
@@ -455,6 +476,40 @@ mod tests {
         // ادامه‌ی اولی از همان آفست
         mgr.resume(&a.id).unwrap();
         assert_eq!(mgr.list()[0].status, DownloadStatus::Downloading);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remove_with_delete_file_clears_dest_and_sidecars() {
+        let (mut mgr, dir, _e) = manager_with(2, false);
+        let a = mgr.add("https://ex.com/a.zip").unwrap();
+        let dest = PathBuf::from(&mgr.records[0].dest_path);
+        let sidecars = crate::engine::sidecar_files(&dest);
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        std::fs::write(&dest, b"partial").unwrap();
+        for s in &sidecars {
+            std::fs::write(s, b"{}").unwrap();
+        }
+        mgr.remove(&a.id, true).unwrap();
+        assert!(mgr.list().is_empty());
+        assert!(!dest.exists(), "فایل ناقص باید پاک شده باشد");
+        for s in &sidecars {
+            assert!(!s.exists(), "سایدکار/موقت باید پاک شده باشد: {}", s.display());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remove_without_delete_file_keeps_dest() {
+        let (mut mgr, dir, _e) = manager_with(2, false);
+        let a = mgr.add("https://ex.com/a.zip").unwrap();
+        let dest = PathBuf::from(&mgr.records[0].dest_path);
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        std::fs::write(&dest, b"done").unwrap();
+        mgr.remove(&a.id, false).unwrap();
+        assert!(mgr.list().is_empty());
+        assert!(dest.exists(), "حذف از فهرست نباید فایل را پاک کند");
+        let _ = std::fs::remove_file(&dest);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

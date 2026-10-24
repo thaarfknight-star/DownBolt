@@ -209,6 +209,7 @@ export function mountApp(root: HTMLElement): void {
       <div class="dl-actions">
         <button class="btn small toggle" type="button"></button>
         <button class="btn small danger remove" type="button">حذف</button>
+        <button class="btn small danger remove-file" type="button">حذف فایل</button>
       </div>`;
     const refs: RowRefs = {
       el,
@@ -223,6 +224,7 @@ export function mountApp(root: HTMLElement): void {
     };
     refs.toggleBtn.addEventListener("click", () => void onToggle(it.id));
     el.querySelector(".remove")!.addEventListener("click", () => void onRemove(it.id));
+    el.querySelector(".remove-file")!.addEventListener("click", () => void onRemoveFile(it.id));
     return refs;
   }
 
@@ -319,6 +321,22 @@ export function mountApp(root: HTMLElement): void {
       void refresh();
     } catch (e) {
       toast("خطا در حذف: " + String((e as Error)?.message || e), true);
+    }
+  }
+
+  async function onRemoveFile(id: string): Promise<void> {
+    const it = items.find((x) => x.id === id);
+    if (!it) return;
+    const msg =
+      it.status === "completed"
+        ? `فایل «${it.file_name}» از روی دیسک هم پاک شود؟ این کار قابل برگشت نیست.`
+        : `دانلود ناتمام «${it.file_name}» همراه فایل ناقص و داده‌های ادامه‌اش از روی دیسک پاک شود؟ این کار قابل برگشت نیست.`;
+    if (!window.confirm(msg)) return;
+    try {
+      await api.removeDownload(id, true);
+      void refresh();
+    } catch (e) {
+      toast("خطا در حذف فایل: " + String((e as Error)?.message || e), true);
     }
   }
 

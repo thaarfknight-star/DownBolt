@@ -199,6 +199,16 @@ fn sidecar_path(dest: &std::path::Path) -> PathBuf {
     PathBuf::from(p)
 }
 
+/// فایل‌های جانبی یک دانلود روی دیسک (به‌جز خود فایل مقصد): سایدکار وضعیت
+/// بخش‌ها و فایل موقتِ نوشتن اتمیک آن. موقع «حذف از دیسک» مدیر این‌ها را
+/// هم پاک می‌کند تا دانلود ناقص هیچ ردی روی دیسک نگذارد.
+pub fn sidecar_files(dest: &std::path::Path) -> Vec<PathBuf> {
+    let sc = sidecar_path(dest);
+    let mut tmp = sc.as_os_str().to_owned();
+    tmp.push(".tmp");
+    vec![sc, PathBuf::from(tmp)]
+}
+
 fn jitter_ms(base: u64) -> u64 {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -336,8 +346,11 @@ impl DownloadEngine for RealEngine {
     }
 
     fn cancel(&self, id: &str) -> Result<(), String> {
-        if let Some(ctl) = self.control_for(id) {
-            ctl.stop.store(true, Ordering::SeqCst);
+        // لغو قطعی است: کنترل از نقشه برداشته و نخ join می‌شود تا بعد از لغو
+        // هیچ نخی روی فایل‌ها ننویسد — پیش‌شرط پاک‌کردن امن از روی دیسک.
+        if let Some(ctl) = self.runs.lock().unwrap().remove(id) {
+            ctl.stop();
+            ctl.join();
         }
         Ok(())
     }
