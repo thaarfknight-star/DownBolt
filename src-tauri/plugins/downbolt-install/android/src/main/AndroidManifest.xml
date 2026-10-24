@@ -2,11 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <application>
-        <!-- authority جدا از provider قالب اپ: قالب خودش .fileprovider با
-             @xml/file_paths خودش را دارد؛ authority یکسان + resource متفاوت
-             = خطای مرج مانیفست (همین بیلد 0.6.1 را انداخت). -->
+        <!-- کلاس جدا (نه FileProvider مستقیم): مرج مانیفست providerها را با
+             android:name کلید می‌زند، پس کلاس یکسان + authority متفاوت هم
+             تضاد می‌گرفت و بیلد 0.6.1 را دو بار انداخت. -->
         <provider
-            android:name="androidx.core.content.FileProvider"
+            android:name="ir.downbolt.plugin.install.DownboltFileProvider"
             android:authorities="${applicationId}.downbolt-fileprovider"
             android:exported="false"
             android:grantUriPermissions="true">
