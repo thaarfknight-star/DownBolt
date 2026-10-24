@@ -96,6 +96,26 @@ impl DownloadManager {
         self.settings.clone()
     }
 
+    /// «همه تمام شدند» (۰٫۶٫۳) — تعریف دقیق محرک حالت پس از دانلود:
+    /// هیچ دانلودی در وضعیت در حال دانلود، در صف، مکث‌شده یا خطادار
+    /// نیست و دست‌کم یک دانلود در فهرست هست. دانلود مکث‌شده یا
+    /// خطادار «تمام‌شدن» را مسدود می‌کند تا کاربر به آن رسیدگی کند؛
+    /// فهرست خالی هم «تمام‌شدن» نیست (حذف همه‌ی دانلودها نباید
+    /// خاموشی بزند). محرک فقط رویداد Completed است (حلقه‌ی lib.rs)،
+    /// نه همین تابع به‌تنهایی — این تابع فقط شرط را می‌سنجد.
+    pub fn all_finished(&self) -> bool {
+        !self.records.is_empty()
+            && self
+                .records
+                .iter()
+                .all(|r| r.status == DownloadStatus::Completed)
+    }
+
+    /// حالت پس از دانلودِ ذخیره‌شده در تنظیمات.
+    pub fn post_download_action(&self) -> crate::model::PostDownloadAction {
+        self.settings.post_download_action
+    }
+
     /// افزودن دانلود تازه از روی URL؛ نام فایل و مسیر مقصد از URL و پوشه‌ی
     /// دانلود تنظیمات درمی‌آید. مقصد تکراری بین تسک‌های موجود رد می‌شود
     /// (اسپک موتور، بخش ۱۱: قفل مسیر مقصد).
@@ -463,6 +483,7 @@ mod tests {
             max_parallel,
             max_connections: 8,
             speed_limit_kbps: 0,
+            post_download_action: crate::model::PostDownloadAction::None,
         })
         .unwrap();
         (mgr, dir, engine)
@@ -577,6 +598,34 @@ mod tests {
         assert_eq!(item.status, DownloadStatus::Paused);
         assert_eq!(item.downloaded, 42);
         assert_eq!(item.size, Some(100));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn all_finished_definition() {
+        // ۰٫۶٫۳: فهرست خالی تمام‌شدن نیست؛ مکث/خطا مسدود می‌کند؛
+        // فقط وقتی همه کامل‌اند، تمام‌شدن برقرار است.
+        let (mut mgr, dir, _e) = manager_with(3, false);
+        assert!(!mgr.all_finished(), "فهرست خالی نباید تمام‌شدن باشد");
+        let a = mgr.add("https://ex.com/a.zip").unwrap();
+        let b = mgr.add("https://ex.com/b.zip").unwrap();
+        assert!(!mgr.all_finished(), "دانلود فعال، تمام‌شدن نیست");
+        mgr.apply_event(EngineEvent::Completed {
+            id: a.id.clone(),
+            generation: 1,
+            total: 100,
+        });
+        assert!(!mgr.all_finished(), "یکی هنوز فعال است");
+        mgr.pause(&b.id).unwrap();
+        assert!(!mgr.all_finished(), "مکث‌شده، تمام‌شدن را مسدود می‌کند");
+        mgr.resume(&b.id).unwrap();
+        // resume دوباره start می‌زند و نسل b به ۲ می‌رسد.
+        mgr.apply_event(EngineEvent::Completed {
+            id: b.id.clone(),
+            generation: 2,
+            total: 200,
+        });
+        assert!(mgr.all_finished(), "حالا همه کامل‌اند");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

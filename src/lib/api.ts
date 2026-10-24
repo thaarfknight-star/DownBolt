@@ -13,6 +13,13 @@
 //   open_download({ id })                 -> void            (باز کردن فایل با برنامه‌ی مناسب؛ فقط اندروید)
 //   share_download({ id })                -> void            (اشتراک‌گذاری فایل؛ فقط اندروید)
 //   read_clipboard()                      -> string          (متن کلیپ‌بورد؛ اگر نبود، فرانت fallback دارد)
+//   copy_to_clipboard({ text })           -> void            (کپی لینک هر دانلود — مثل ADM و FDM)
+//   cancel_post_download_action()         -> void            (لغو شمارش معکوس پس از دانلود)
+// رویدادهای حالت پس از دانلود (۰٫۶٫۳، فقط دسکتاپ):
+//   emit("post-download-countdown", { action, remaining, run })
+//   emit("post-download-cancelled", { run })
+//   emit("post-download-executed", { action, run })
+//   emit("post-download-failed", { action, run, error })
 // رویداد (اختیاری ولی توصیه‌شده): بک‌اند هر تغییر/تیک پیشرفت را با
 //   emit("download-progress", DownloadItem[])  (اسنپ‌شات کامل لیست) بفرستد؛
 //   اگر رویداد نیاید، فرانت خودش هر ۱ ثانیه list_downloads را پول می‌کند.
@@ -37,6 +44,9 @@ export interface DownloadItem {
   created_at: string; // ISO
 }
 
+/** کاری که بعد از تمام‌شدن همه‌ی دانلودها انجام می‌شود (۰٫۶٫۳) */
+export type PostDownloadAction = "none" | "shutdown" | "sleep" | "restart";
+
 export interface DmSettings {
   download_dir: string;
   /** سقف دانلودهای هم‌زمان (سمت Rust هم serde default دارد) */
@@ -45,6 +55,15 @@ export interface DmSettings {
   max_connections: number;
   /** سقف سرعت کلی به کیلوبایت‌برثانیه؛ ۰ = نامحدود */
   speed_limit_kbps: number;
+  /** حالت پس از دانلود؛ "none" یعنی هیچ‌کاری نکن */
+  post_download_action: PostDownloadAction;
+}
+
+/** رویداد تیک شمارش معکوس پس از دانلود */
+export interface PostDownloadCountdown {
+  action: PostDownloadAction;
+  remaining: number;
+  run: number;
 }
 
 /** نتیجه‌ی بررسی آپدیت (قرارداد Rust: UpdateInfo2) */
@@ -90,11 +109,42 @@ export const api = {
   setSettings: (settings: DmSettings): Promise<void> => invoke("set_settings", { settings }),
   pickDownloadDir: (): Promise<string | null> => invoke("pick_download_dir"),
   readClipboard: (): Promise<string> => invoke("read_clipboard"),
+  copyToClipboard: (text: string): Promise<void> => invoke("copy_to_clipboard", { text }),
+  cancelPostDownload: (): Promise<void> => invoke("cancel_post_download_action"),
 };
 
 /** اشتراک رویداد اسنپ‌شات پیشرفت؛ اگر بک‌اند رویداد نفرستد، هیچ‌وقت صدا زده نمی‌شود */
 export function onProgressSnapshot(cb: (items: DownloadItem[]) => void): Promise<() => void> {
   return listen<DownloadItem[]>("download-progress", (e) => cb(e.payload));
+}
+
+/** رویدادهای حالت پس از دانلود (۰٫۶٫۳) */
+export function onPostDownloadCountdown(
+  cb: (p: PostDownloadCountdown) => void,
+): Promise<() => void> {
+  return listen<PostDownloadCountdown>("post-download-countdown", (e) => cb(e.payload));
+}
+
+export function onPostDownloadCancelled(cb: (p: { run: number }) => void): Promise<() => void> {
+  return listen<{ run: number }>("post-download-cancelled", (e) => cb(e.payload));
+}
+
+export function onPostDownloadExecuted(
+  cb: (p: { action: PostDownloadAction; run: number }) => void,
+): Promise<() => void> {
+  return listen<{ action: PostDownloadAction; run: number }>(
+    "post-download-executed",
+    (e) => cb(e.payload),
+  );
+}
+
+export function onPostDownloadFailed(
+  cb: (p: { action: PostDownloadAction; run: number; error: string }) => void,
+): Promise<() => void> {
+  return listen<{ action: PostDownloadAction; run: number; error: string }>(
+    "post-download-failed",
+    (e) => cb(e.payload),
+  );
 }
 
 /** درصد پیشرفت یک آیتم (۰ تا ۱۰۰)؛ حجم نامشخص = null */

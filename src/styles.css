@@ -135,7 +135,8 @@ body {
 .dl[data-status="completed"] .dl-status { color: #a7f3d0; border-color: rgba(52, 211, 153, 0.4); }
 .dl[data-status="error"] .dl-status { color: #fecdd3; border-color: rgba(251, 113, 133, 0.45); }
 .dl[data-status="paused"] .dl-status { color: #fde68a; border-color: rgba(251, 191, 36, 0.4); }
-.dl-meta { color: var(--muted); font-size: 12.5px; margin: 4px 0 8px; }
+.dl-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--muted); font-size: 12.5px; margin: 4px 0 8px; }
+.dl-size { white-space: nowrap; }
 .dl-bar { height: 9px; border-radius: 999px; background: #0a1120; border: 1px solid var(--line); overflow: hidden; }
 .dl-fill {
   height: 100%; width: 0%; border-radius: 999px;
@@ -146,15 +147,42 @@ body {
 .dl[data-status="completed"] .dl-fill { background: linear-gradient(90deg, #10b981, var(--ok)); box-shadow: 0 0 12px rgba(52, 211, 153, 0.5); }
 .dl[data-status="paused"] .dl-fill { background: linear-gradient(90deg, #b45309, var(--warn)); box-shadow: none; }
 .dl[data-status="error"] .dl-fill { background: linear-gradient(90deg, #be123c, var(--danger)); box-shadow: none; }
-.dl-nums { display: flex; gap: 18px; margin-top: 7px; font-size: 12.5px; color: var(--muted); }
-.dl-pct { color: #cffafe; font-weight: 700; }
+.dl-nums { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 7px; font-size: 12.5px; color: var(--muted); }
+.dl-nums span { white-space: nowrap; }
+.dl-pct { color: #cffafe; font-weight: 700; white-space: nowrap; }
 .dl-actions { display: flex; flex-direction: column; gap: 8px; }
 
 .empty { text-align: center; padding: 38px 20px; color: var(--muted); }
 .empty-ic { font-size: 34px; margin-bottom: 8px; filter: drop-shadow(0 0 12px rgba(34, 211, 238, 0.6)); }
 .muted { color: var(--muted); font-size: 13px; }
 
-/* ── تنظیمات ─────────────────────────── */
+/* ── صفحه‌ی تنظیمات (۰٫۶٫۳: نمای جدا) ─── */
+.app.settings-open .addbar, .app.settings-open .stats,
+.app.settings-open .chart-card, .app.settings-open .list { display: none; }
+.settings-page:not([hidden]) { display: flex; flex-direction: column; gap: 14px; }
+.settings-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.settings-head h2 { margin: 0; font-size: 19px; }
+.settings-section { padding: 18px; }
+.settings-section h3 { margin: 0 0 14px; font-size: 15.5px; }
+.settings-section .field:last-child { margin-bottom: 0; }
+.settings-save-row { margin-top: 2px; }
+.field select {
+  width: 100%; font-family: inherit; font-size: 14px; color: var(--ink);
+  background: #0a1120; border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; outline: none;
+}
+.field select:focus { border-color: var(--neon); box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.18); }
+
+/* ── مودال شمارش معکوس پس از دانلود ─── */
+.power-modal:not([hidden]) {
+  position: fixed; inset: 0; z-index: 60; display: flex;
+  align-items: center; justify-content: center;
+  background: rgba(3, 6, 12, 0.65);
+}
+.power-card { padding: 26px 30px; text-align: center; max-width: 430px; width: calc(100% - 40px); }
+.power-card h3 { margin: 0 0 8px; font-size: 17px; }
+.power-count { font-size: 46px; font-weight: 700; color: var(--warn); margin: 10px 0 16px; direction: ltr; }
+
+/* ── تنظیمات (قدیمی — با صفحه‌ی تازه استفاده نمی‌شود) ─── */
 .settings { padding: 18px; margin-top: 14px; }
 .settings h2 { margin: 0 0 14px; font-size: 17px; }
 .field { display: block; margin-bottom: 14px; }
@@ -184,7 +212,11 @@ body {
   .stats { grid-template-columns: 1fr; }
   .addbar { flex-direction: column; }
   .dl { flex-wrap: wrap; }
-  .dl-actions { flex-direction: row; }
+  /* موبایل: ردیف اول = آیکن + بدنه‌ی کارت (نام، وضعیت، حجم/درصد، نوار، سرعت/زمان)؛
+     ردیف دوم = دکمه‌ها در عرض کامل با wrap — دیگر هیچ هم‌پوشانی و سرریزی نیست. */
+  .dl-main { flex: 1 1 calc(100% - 58px); }
+  .dl-actions { flex: 1 1 100%; flex-direction: row; flex-wrap: wrap; margin-top: 10px; }
+  .dl-bar { height: 12px; }
   .field-grid { grid-template-columns: 1fr; }
   .topbar { flex-wrap: wrap; }
 }

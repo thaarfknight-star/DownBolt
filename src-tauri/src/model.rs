@@ -35,6 +35,19 @@ pub struct DownloadItem {
     pub created_at: String,
 }
 
+/// کاری که بعد از تمام‌شدن همه‌ی دانلودها انجام می‌شود (۰٫۶٫۳).
+/// روی سیم serde همان snake_case است که فرانت می‌فرستد
+/// ("none" / "shutdown" / "sleep" / "restart").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PostDownloadAction {
+    #[default]
+    None,
+    Shutdown,
+    Sleep,
+    Restart,
+}
+
 /// تنظیمات برنامه (قرارداد DmSettings در فرانت).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DmSettings {
@@ -47,6 +60,11 @@ pub struct DmSettings {
     pub max_connections: u32,
     /// سقف سرعت کلی به کیلوبایت‌برثانیه؛ ۰ = نامحدود
     pub speed_limit_kbps: u32,
+    /// کاری که بعد از تمام‌شدن همه‌ی دانلودها انجام می‌شود.
+    /// serde default یعنی فایل‌های state.json قدیمی (بدون این فیلد)
+    /// بدون خطا خوانده می‌شوند و «هیچ‌کدام» می‌گیرند.
+    #[serde(default)]
+    pub post_download_action: PostDownloadAction,
 }
 
 fn default_max_connections() -> u32 {
@@ -64,6 +82,7 @@ impl DmSettings {
             max_parallel: 3,
             max_connections: default_max_connections(),
             speed_limit_kbps: 0,
+            post_download_action: PostDownloadAction::None,
         }
     }
 
@@ -175,5 +194,19 @@ mod tests {
         assert_eq!(s.max_parallel, 3);
         assert_eq!(s.max_connections, 8);
         assert_eq!(s.speed_limit_kbps, 0);
+        // ۰٫۶٫۳: فایل state.json قدیمی بدون فیلد تازه هم باید خوانده
+        // شود و حالت پس از دانلودش «هیچ‌کدام» باشد.
+        assert_eq!(s.post_download_action, PostDownloadAction::None);
+    }
+
+    #[test]
+    fn post_download_action_roundtrips() {
+        let s: DmSettings = serde_json::from_str(
+            r#"{"download_dir":"/tmp/dl","max_parallel":3,"max_connections":8,"speed_limit_kbps":0,"post_download_action":"sleep"}"#,
+        )
+        .unwrap();
+        assert_eq!(s.post_download_action, PostDownloadAction::Sleep);
+        let back = serde_json::to_string(&s).unwrap();
+        assert!(back.contains("\"post_download_action\":\"sleep\""));
     }
 }

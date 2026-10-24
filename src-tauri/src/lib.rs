@@ -8,12 +8,14 @@
 mod engine;
 mod manager;
 mod model;
+mod power;
 mod store;
 mod updater;
 
 use engine::{EngineEvent, RealEngine};
 use manager::{AppliedEffect, DownloadManager};
-use model::{DmSettings, DownloadItem};
+use model::{DmSettings, DownloadItem, PostDownloadAction};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -35,6 +37,168 @@ pub struct TrayState(pub Mutex<bool>);
 #[tauri::command]
 fn set_close_to_tray(state: tauri::State<TrayState>, enabled: bool) {
     *state.0.lock().unwrap() = enabled;
+}
+
+/// وضعیت شمارش معکوس پس از دانلود (۰٫۶٫۳) — فقط یک شمارش هم‌زمان.
+/// هر شروع، شماره‌ی نسل تازه می‌گیرد تا رویدادهای نخ قدیمی (لغو/اجرا)
+/// با شمارش تازه قاطی نشوند؛ فرانت رویدادهای نسل ناهم‌خوان را نادیده می‌گیرد.
+pub struct PostDownloadState {
+    active: Mutex<Option<(PostDownloadAction, Arc<AtomicBool>, u64)>>,
+    next_run: Mutex<u64>,
+}
+
+impl PostDownloadState {
+    fn new() -> Self {
+        Self {
+            active: Mutex::new(None),
+            next_run: Mutex::new(1),
+        }
+    }
+
+    /// اکشن شمارش فعال (اگر هست).
+    fn active_action(&self) -> Option<PostDownloadAction> {
+        self.active
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|(a, _, _)| *a)
+    }
+
+    /// لغو شمارش فعال (اگر هست) — نخ شمارش با پرچم، خودش رویداد لغو را می‌فرستد.
+    fn cancel(&self) {
+        if let Some((_, flag, _)) = self.active.lock().unwrap().take() {
+            flag.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// شروع شمارش تازه؛ پرچم لغو و شماره‌ی نسلش برمی‌گردد.
+    fn start(&self, action: PostDownloadAction) -> (Arc<AtomicBool>, u64) {
+        let flag = Arc::new(AtomicBool::new(false));
+        let mut run = self.next_run.lock().unwrap();
+        let id = *run;
+        *run += 1;
+        *self.active.lock().unwrap() = Some((action, flag.clone(), id));
+        (flag, id)
+    }
+
+    /// پایان شمارش از سمت نخ — فقط اگر همان نسل هنوز فعال باشد پاک می‌شود.
+    fn finish(&self, run: u64) {
+        let mut g = self.active.lock().unwrap();
+        if let Some((_, _, id)) = g.as_ref() {
+            if *id == run {
+                *g = None;
+            }
+        }
+    }
+}
+
+/// طول شمارش معکوس پیش از اجرای حالت پس از دانلود (ثانیه) — فرصت لغو.
+const POST_DOWNLOAD_COUNTDOWN_SECS: u64 = 60;
+
+/// نخ شمارش معکوس: هر ثانیه تیک می‌فرستد؛ لغو (دکمه‌ی فرانت) یا
+/// به‌هم‌خوردن شرط «همه تمام‌اند» (دانلود تازه) شمارش را می‌اندازد؛
+/// وگرنه بعد از ۶۰ ثانیه اکشن اجرا می‌شود. وضعیت pending پیش از اجرا
+/// پاک می‌شود تا بیدارشدن از خواب، شمارش را دوباره راه نیندازد.
+fn spawn_post_download_countdown(
+    app: AppHandle,
+    action: PostDownloadAction,
+    cancel: Arc<AtomicBool>,
+    run: u64,
+) {
+    std::thread::spawn(move || {
+        let action_name = match action {
+            PostDownloadAction::Shutdown => "shutdown",
+            PostDownloadAction::Sleep => "sleep",
+            PostDownloadAction::Restart => "restart",
+            PostDownloadAction::None => "none",
+        };
+        for remaining in (1..=POST_DOWNLOAD_COUNTDOWN_SECS).rev() {
+            let _ = app.emit(
+                "post-download-countdown",
+                serde_json::json!({ "action": action_name, "remaining": remaining, "run": run }),
+            );
+            std::thread::sleep(Duration::from_secs(1));
+            if cancel.load(Ordering::SeqCst) {
+                let _ = app.emit(
+                    "post-download-cancelled",
+                    serde_json::json!({ "run": run }),
+                );
+                return;
+            }
+            let still_done = app
+                .state::<AppState>()
+                .manager
+                .lock()
+                .map(|m| m.all_finished())
+                .unwrap_or(false);
+            if !still_done {
+                let _ = app.emit(
+                    "post-download-cancelled",
+                    serde_json::json!({ "run": run }),
+                );
+                return;
+            }
+        }
+        app.state::<PostDownloadState>().finish(run);
+        match power::execute(action) {
+            Ok(()) => {
+                let _ = app.emit(
+                    "post-download-executed",
+                    serde_json::json!({ "action": action_name, "run": run }),
+                );
+            }
+            Err(e) => {
+                let _ = app.emit(
+                    "post-download-failed",
+                    serde_json::json!({ "action": action_name, "run": run, "error": e }),
+                );
+            }
+        }
+    });
+}
+
+/// هم‌گام‌سازی شمارش با وضعیت فعلی (۰٫۶٫۳): اگر همه تمام‌اند و حالتی
+/// تنظیم شده، شمارش همان حالت راه می‌افتد (اگر همان حالت در جریان
+/// نباشد)؛ وگرنه شمارش فعال لغو می‌شود. فقط دسکتاپ — روی موبایل
+/// حالت پس از دانلود پشتیبانی نمی‌شود.
+fn refresh_post_download(app: &AppHandle, mgr: &DownloadManager) {
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, mgr);
+        return;
+    }
+    let desired = if mgr.all_finished() {
+        mgr.post_download_action()
+    } else {
+        PostDownloadAction::None
+    };
+    let state = app.state::<PostDownloadState>();
+    if desired == PostDownloadAction::None {
+        if state.active_action().is_some() {
+            state.cancel();
+        }
+        return;
+    }
+    if state.active_action() == Some(desired) {
+        return;
+    }
+    if state.active_action().is_some() {
+        state.cancel();
+    }
+    let (flag, run) = state.start(desired);
+    spawn_post_download_countdown(app.clone(), desired, flag, run);
+}
+
+/// کپی متن در کلیپ‌بورد سیستم (دکمه‌ی «کپی لینک» هر دانلود — مثل ADM و FDM).
+#[tauri::command]
+fn copy_to_clipboard(app: AppHandle, text: String) -> Result<(), String> {
+    app.clipboard().write_text(text).map_err(|e| e.to_string())
+}
+
+/// لغو شمارش معکوس پس از دانلود (دکمه‌ی لغو در مودال فرانت).
+#[tauri::command]
+fn cancel_post_download_action(state: State<PostDownloadState>) {
+    state.cancel();
 }
 
 /// انتشار اسنپ‌شات کامل لیست به فرانت (رویداد download-progress در قرارداد).
@@ -120,6 +284,9 @@ fn set_settings(
 ) -> Result<(), String> {
     let mut mgr = state.manager.lock().unwrap();
     mgr.set_settings(settings)?;
+    // تغییر حالت پس از دانلود، شمارش فعال را هم هم‌گام می‌کند
+    // (لغو با «هیچ‌کدام»، یا شروع تازه با حالت تازه).
+    refresh_post_download(&app, &mgr);
     emit_snapshot(&app, &mgr);
     Ok(())
 }
@@ -249,6 +416,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(TrayState(Mutex::new(true)))
+        .manage(PostDownloadState::new())
         .manage(updater::UpdateV2State::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -333,6 +501,9 @@ pub fn run() {
                             emit_snapshot(&handle, &mgr);
                             last_emit = Instant::now();
                             last_save = Instant::now();
+                            // محرک حالت پس از دانلود (۰٫۶٫۳): تغییر وضعیت
+                            // ممکن است صف را به «همه تمام‌اند» رسانده باشد.
+                            refresh_post_download(&handle, &mgr);
                         }
                         AppliedEffect::ProgressOnly => {
                             if last_save.elapsed() >= Duration::from_secs(1) {
@@ -419,6 +590,8 @@ pub fn run() {
             #[cfg(target_os = "android")]
             share_download,
             read_clipboard,
+            copy_to_clipboard,
+            cancel_post_download_action,
             set_close_to_tray,
             updater::check_update2,
             updater::download_update2,

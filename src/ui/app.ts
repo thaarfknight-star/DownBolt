@@ -4,11 +4,16 @@
 import {
   api,
   etaSeconds,
+  onPostDownloadCancelled,
+  onPostDownloadCountdown,
+  onPostDownloadExecuted,
+  onPostDownloadFailed,
   onProgressSnapshot,
   onUpdateProgress,
   progressPct,
   type DmSettings,
   type DownloadItem,
+  type PostDownloadAction,
 } from "../lib/api";
 import { faInt, faNum, fmtBytes, fmtEta, fmtPct, fmtSpeed } from "../lib/format";
 import { SpeedChart } from "./chart";
@@ -56,7 +61,7 @@ function fileIcon(name: string): string {
 interface RowRefs {
   el: HTMLElement;
   name: HTMLElement;
-  meta: HTMLElement;
+  size: HTMLElement;
   barFill: HTMLElement;
   pct: HTMLElement;
   speed: HTMLElement;
@@ -109,36 +114,60 @@ export function mountApp(root: HTMLElement): void {
 
     <main id="listWrap" class="list"></main>
 
-    <section id="settingsPanel" class="card settings" hidden>
-      <h2>تنظیمات</h2>
-      <label class="field">
-        <span>پوشه‌ی دانلود</span>
-        <span class="dir-row">
-          <input id="setDir" dir="ltr" type="text" />
-          <button id="pickDirBtn" class="btn" type="button">انتخاب پوشه…</button>
-        </span>
-      </label>
-      <p id="androidDirNote" class="muted" hidden>روی اندروید، فایل‌های کامل‌شده در پوشه‌ی Downloads عمومی ذخیره می‌شوند و «حذف فایل» نسخه‌ی عمومی را هم پاک می‌کند؛ انتخاب پوشه روی موبایل ممکن نیست.</p>
-      <div class="field-grid">
-        <label class="field">
-          <span>سقف اتصال موازی هر دانلود (۱ تا ۱۶)</span>
-          <input id="setParallel" type="number" min="1" max="16" step="1" />
-        </label>
-        <label class="field">
-          <span>سقف سرعت کلی (کیلوبایت/ثانیه — ۰ = نامحدود)</span>
-          <input id="setSpeed" type="number" min="0" step="64" />
-        </label>
-      </div>
-      <label class="field tray-field">
-        <span>بستن به سینی سیستم (با بستن پنجره، برنامه در پس‌زمینه می‌ماند و دانلودها ادامه پیدا می‌کنند)</span>
-        <input id="setTrayDm" type="checkbox" checked />
-      </label>
-      <div class="settings-actions">
-        <button id="saveSettingsBtn" class="btn primary" type="button">ذخیره تنظیمات</button>
-        <span id="settingsMsg" class="settings-msg"></span>
+    <!-- صفحه‌ی تنظیمات (۰٫۶٫۳): نمای جدا — با باز شدنش، بخش‌های دانلود
+         پنهان می‌شوند (کلاس settings-open روی .app) و تنظیمات به‌صورت
+         صفحه‌ی کامل با بخش‌های جدا نشان داده می‌شود. -->
+    <section id="settingsPage" class="settings-page" hidden>
+      <div class="settings-head">
+        <h2>تنظیمات</h2>
+        <button id="backFromSettingsBtn" class="btn" type="button">→ بازگشت به دانلودها</button>
       </div>
 
-      <div class="update-box">
+      <section class="card settings-section">
+        <h3>دانلودها</h3>
+        <label class="field">
+          <span>پوشه‌ی دانلود</span>
+          <span class="dir-row">
+            <input id="setDir" dir="ltr" type="text" />
+            <button id="pickDirBtn" class="btn" type="button">انتخاب پوشه…</button>
+          </span>
+        </label>
+        <p id="androidDirNote" class="muted" hidden>روی اندروید، فایل‌های کامل‌شده در پوشه‌ی Downloads عمومی ذخیره می‌شوند و «حذف فایل» نسخه‌ی عمومی را هم پاک می‌کند؛ انتخاب پوشه روی موبایل ممکن نیست.</p>
+        <div class="field-grid">
+          <label class="field">
+            <span>سقف اتصال موازی هر دانلود (۱ تا ۱۶)</span>
+            <input id="setParallel" type="number" min="1" max="16" step="1" />
+          </label>
+          <label class="field">
+            <span>سقف سرعت کلی (کیلوبایت/ثانیه — ۰ = نامحدود)</span>
+            <input id="setSpeed" type="number" min="0" step="64" />
+          </label>
+        </div>
+      </section>
+
+      <section id="postDownloadSection" class="card settings-section">
+        <h3>پس از پایان دانلودها</h3>
+        <label class="field">
+          <span>وقتی همه‌ی دانلودها تمام شدند</span>
+          <select id="setPostAction">
+            <option value="none">هیچ‌کاری نکن</option>
+            <option value="shutdown">خاموش کردن سیستم (Shutdown)</option>
+            <option value="sleep">خواب سیستم (Sleep)</option>
+            <option value="restart">ری‌استارت سیستم (Restart)</option>
+          </select>
+        </label>
+        <p class="muted">«تمام‌شدن» یعنی هیچ دانلودی در حال دانلود، در صف، مکث‌شده یا خطادار نباشد و دست‌کم یک دانلود در فهرست باشد. پیش از اجرا ۶۰ ثانیه فرصت لغو داری؛ اگر دانلود تازه‌ای اضافه شود، شمارش خودش لغو می‌شود. فقط روی دسکتاپ (ویندوز).</p>
+      </section>
+
+      <section class="card settings-section">
+        <h3>برنامه</h3>
+        <label class="field tray-field">
+          <span>بستن به سینی سیستم (با بستن پنجره، برنامه در پس‌زمینه می‌ماند و دانلودها ادامه پیدا می‌کنند)</span>
+          <input id="setTrayDm" type="checkbox" checked />
+        </label>
+      </section>
+
+      <section class="card settings-section">
         <h3>به‌روزرسانی برنامه</h3>
         <div class="field"><span>نسخه‌ی فعلی: <b id="updCurrent">…</b></span></div>
         <label class="field">
@@ -161,8 +190,23 @@ export function mountApp(root: HTMLElement): void {
           <button id="updCancelBtn" class="btn" type="button" hidden>لغو دانلود</button>
           <button id="updApplyBtn" class="btn primary" type="button" hidden>نصب به‌روزرسانی</button>
         </div>
+      </section>
+
+      <div class="settings-actions settings-save-row">
+        <button id="saveSettingsBtn" class="btn primary" type="button">ذخیره تنظیمات</button>
+        <span id="settingsMsg" class="settings-msg"></span>
       </div>
     </section>
+
+    <!-- مودال شمارش معکوس پس از دانلود (۰٫۶٫۳) -->
+    <div id="powerModal" class="power-modal" hidden>
+      <div class="card power-card">
+        <h3>دانلودها تمام شدند ✓</h3>
+        <p id="powerText" class="muted"></p>
+        <div id="powerCount" class="power-count">۶۰</div>
+        <button id="powerCancelBtn" class="btn primary" type="button">لغو</button>
+      </div>
+    </div>
 
     <div id="toast" class="toast" hidden></div>
   </div>`;
@@ -173,7 +217,15 @@ export function mountApp(root: HTMLElement): void {
   const totalSpeedEl = $<HTMLElement>("#totalSpeed");
   const chartNowEl = $<HTMLElement>("#chartNow");
   const toastEl = $<HTMLElement>("#toast");
-  const settingsPanel = $<HTMLElement>("#settingsPanel");
+  const settingsPage = $<HTMLElement>("#settingsPage");
+  const appEl = root.querySelector<HTMLElement>(".app")!;
+
+  // نمای تنظیمات (۰٫۶٫۳): صفحه‌ی جدا؛ با باز شدنش بخش‌های دانلود
+  // با کلاس settings-open پنهان می‌شوند.
+  function showSettingsPage(show: boolean): void {
+    settingsPage.hidden = !show;
+    appEl.classList.toggle("settings-open", show);
+  }
 
   const chart = new SpeedChart($<HTMLCanvasElement>("#speedChart"));
   window.addEventListener("resize", () => chart.resize());
@@ -204,16 +256,16 @@ export function mountApp(root: HTMLElement): void {
           <span class="dl-name"></span>
           <span class="dl-status"></span>
         </div>
-        <div class="dl-meta"></div>
+        <div class="dl-line"><span class="dl-size"></span><span class="dl-pct"></span></div>
         <div class="dl-bar"><div class="dl-fill"></div></div>
         <div class="dl-nums">
-          <span class="dl-pct"></span>
           <span class="dl-speed"></span>
           <span class="dl-eta"></span>
         </div>
       </div>
       <div class="dl-actions">
         <button class="btn small toggle" type="button"></button>
+        <button class="btn small copy-link" type="button">کپی لینک</button>
         <button class="btn small open-file" type="button">باز کردن</button>
         <button class="btn small share-file" type="button">اشتراک‌گذاری</button>
         <button class="btn small danger remove" type="button">حذف</button>
@@ -222,7 +274,7 @@ export function mountApp(root: HTMLElement): void {
     const refs: RowRefs = {
       el,
       name: el.querySelector(".dl-name")!,
-      meta: el.querySelector(".dl-meta")!,
+      size: el.querySelector(".dl-size")!,
       barFill: el.querySelector(".dl-fill")!,
       pct: el.querySelector(".dl-pct")!,
       speed: el.querySelector(".dl-speed")!,
@@ -233,6 +285,7 @@ export function mountApp(root: HTMLElement): void {
       shareBtn: el.querySelector(".share-file")!,
     };
     refs.toggleBtn.addEventListener("click", () => void onToggle(it.id));
+    el.querySelector(".copy-link")!.addEventListener("click", () => void onCopyLink(it.id));
     refs.openBtn.addEventListener("click", () => void onOpen(it.id));
     refs.shareBtn.addEventListener("click", () => void onShare(it.id));
     el.querySelector(".remove")!.addEventListener("click", () => void onRemove(it.id));
@@ -244,13 +297,13 @@ export function mountApp(root: HTMLElement): void {
     const pct = progressPct(it);
     refs.name.textContent = it.file_name || "فایل بدون نام";
     refs.name.title = it.url;
-    refs.meta.textContent =
+    refs.size.textContent =
       it.size !== null
         ? `${fmtBytes(it.downloaded)} از ${fmtBytes(it.size)}`
         : `${fmtBytes(it.downloaded)} دانلود شده — حجم کل نامشخص`;
     refs.barFill.style.width = pct !== null ? `${pct}%` : it.status === "completed" ? "100%" : "0%";
     refs.el.dataset.status = it.status;
-    refs.pct.textContent = pct !== null ? fmtPct(pct) : it.status === "completed" ? "۱۰۰٪" : "—";
+    refs.pct.textContent = pct !== null ? `— ${fmtPct(pct)}` : it.status === "completed" ? "— ۱۰۰٪" : "—";
     refs.speed.textContent = it.status === "downloading" ? fmtSpeed(it.speed) : "";
     const eta = etaSeconds(it);
     refs.eta.textContent = eta !== null ? `حدود ${fmtEta(eta)} مانده` : "";
@@ -341,6 +394,24 @@ export function mountApp(root: HTMLElement): void {
     }
   }
 
+  // کپی لینک دانلود (۰٫۶٫۳، مثل ADM و FDM): اول کامند بک‌اند با
+  // پلاگین کلیپ‌بورد، و اگر نشد fallback مرورگر؛ بعد تأیید کوتاه.
+  async function onCopyLink(id: string): Promise<void> {
+    const it = items.find((x) => x.id === id);
+    if (!it) return;
+    try {
+      await api.copyToClipboard(it.url);
+    } catch {
+      try {
+        await navigator.clipboard.writeText(it.url);
+      } catch {
+        toast("کپی لینک ناموفق بود.", true);
+        return;
+      }
+    }
+    toast("لینک کپی شد ✓");
+  }
+
   async function onOpen(id: string): Promise<void> {
     try {
       await api.openDownload(id);
@@ -425,8 +496,8 @@ export function mountApp(root: HTMLElement): void {
   // موقع ذخیره از همین‌جا حفظ می‌شوند تا قرارداد DmSettings نشکند.
   let lastSettings: DmSettings | null = null;
   $("#settingsBtn").addEventListener("click", async () => {
-    const opening = settingsPanel.hidden;
-    settingsPanel.hidden = !opening;
+    const opening = settingsPage.hidden;
+    showSettingsPage(opening);
     if (opening) {
       try {
         const s = await api.getSettings();
@@ -434,6 +505,7 @@ export function mountApp(root: HTMLElement): void {
         $<HTMLInputElement>("#setDir").value = s.download_dir;
         $<HTMLInputElement>("#setParallel").value = String(s.max_connections);
         $<HTMLInputElement>("#setSpeed").value = String(s.speed_limit_kbps);
+        $<HTMLSelectElement>("#setPostAction").value = s.post_download_action || "none";
         settingsMsg.textContent = "";
       } catch {
         settingsMsg.textContent = "خواندن تنظیمات از بک‌اند ممکن نشد.";
@@ -441,10 +513,14 @@ export function mountApp(root: HTMLElement): void {
     }
   });
 
+  $("#backFromSettingsBtn").addEventListener("click", () => showSettingsPage(false));
+
   function applyAndroidUi(): void {
     $<HTMLInputElement>("#setDir").disabled = isAndroid;
     $<HTMLElement>("#pickDirBtn").hidden = isAndroid;
     $<HTMLElement>("#androidDirNote").hidden = !isAndroid;
+    // حالت پس از دانلود فقط دسکتاپ است (خاموش/خواب/ری‌استارت سیستم).
+    $<HTMLElement>("#postDownloadSection").hidden = isAndroid;
   }
 
   $("#pickDirBtn").addEventListener("click", async () => {
@@ -462,6 +538,8 @@ export function mountApp(root: HTMLElement): void {
       max_parallel: lastSettings?.max_parallel ?? 3,
       max_connections: Math.min(16, Math.max(1, Number($<HTMLInputElement>("#setParallel").value) || 8)),
       speed_limit_kbps: Math.max(0, Number($<HTMLInputElement>("#setSpeed").value) || 0),
+      post_download_action: $<HTMLSelectElement>("#setPostAction")
+        .value as PostDownloadAction,
     };
     try {
       await api.setSettings(settings);
@@ -469,6 +547,48 @@ export function mountApp(root: HTMLElement): void {
     } catch (e) {
       settingsMsg.textContent = "خطا در ذخیره: " + String((e as Error)?.message || e);
     }
+  });
+
+  /* ── شمارش معکوس پس از دانلود (۰٫۶٫۳) ── */
+  const powerModal = $<HTMLElement>("#powerModal");
+  const powerText = $<HTMLElement>("#powerText");
+  const powerCount = $<HTMLElement>("#powerCount");
+  const POWER_LABELS: Record<string, string> = {
+    shutdown: "خاموش می‌شود",
+    sleep: "به خواب می‌رود",
+    restart: "ری‌استارت می‌شود",
+  };
+  // نسل شمارشِ در حال نمایش؛ رویدادهای نسل ناهم‌خوان نادیده گرفته
+  // می‌شوند تا لغو شمارش قدیمی، مودال شمارش تازه را نپوشاند.
+  let powerRun: number | null = null;
+  function hidePowerModal(): void {
+    powerModal.hidden = true;
+    powerRun = null;
+  }
+  void onPostDownloadCountdown((p) => {
+    powerRun = p.run;
+    powerModal.hidden = false;
+    powerText.textContent = `سیستم تا ${faNum(p.remaining)} ثانیه‌ی دیگر ${POWER_LABELS[p.action] || ""}؛ برای لغو، دکمه‌ی زیر را بزن.`;
+    powerCount.textContent = faNum(p.remaining);
+  }).catch(() => undefined);
+  void onPostDownloadCancelled((p) => {
+    if (powerRun === p.run) hidePowerModal();
+  }).catch(() => undefined);
+  void onPostDownloadExecuted((p) => {
+    if (powerRun === p.run) {
+      hidePowerModal();
+      toast("حالت پس از دانلود در حال اجراست.");
+    }
+  }).catch(() => undefined);
+  void onPostDownloadFailed((p) => {
+    if (powerRun === p.run) {
+      hidePowerModal();
+      toast("اجرای حالت پس از دانلود ناموفق بود: " + p.error, true);
+    }
+  }).catch(() => undefined);
+  $("#powerCancelBtn").addEventListener("click", () => {
+    hidePowerModal();
+    void api.cancelPostDownload().catch(() => undefined);
   });
 
   /* ── چرخه‌ی به‌روزرسانی: رویداد بک‌اند + پول ۱ ثانیه‌ای ── */
