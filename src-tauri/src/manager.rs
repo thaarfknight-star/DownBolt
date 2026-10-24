@@ -73,6 +73,25 @@ impl DownloadManager {
         self.records.iter().map(|r| r.to_item()).collect()
     }
 
+    /// خواندن رکورد با شناسه (فقط مسیرهای اندروید از آن استفاده می‌کنند).
+    #[cfg(target_os = "android")]
+    pub fn get(&self, id: &str) -> Option<DownloadRecord> {
+        self.records.iter().find(|r| r.id == id).cloned()
+    }
+
+    /// ثبت URI ورودیِ منتشرشده در Downloads عمومی اندروید روی رکورد
+    /// (حذف از دیسک بعداً همین ورودی را پاک می‌کند).
+    #[cfg(target_os = "android")]
+    pub fn set_public_uri(&mut self, id: &str, uri: String) -> Result<(), String> {
+        let rec = self
+            .records
+            .iter_mut()
+            .find(|r| r.id == id)
+            .ok_or_else(|| "دانلودی با این شناسه پیدا نشد.".to_string())?;
+        rec.public_uri = Some(uri);
+        self.persist()
+    }
+
     pub fn settings(&self) -> DmSettings {
         self.settings.clone()
     }
@@ -106,6 +125,7 @@ impl DownloadManager {
             speed: 0,
             status: DownloadStatus::Queued,
             error: None,
+            public_uri: None,
             created_at: now_iso(),
         };
         self.records.push(rec);

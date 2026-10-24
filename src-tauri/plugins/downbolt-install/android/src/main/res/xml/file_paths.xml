@@ -3,4 +3,7 @@
     <cache-path name="cache" path="." />
     <external-cache-path name="external-cache" path="." />
     <files-path name="files" path="." />
+    <!-- پوشه‌ی دانلود اندرویدِ Tauri همان external-files است؛ بدون این
+         خط، FileProvider برای فایل خصوصی دانلود IllegalArgumentException می‌دهد -->
+    <external-files-path name="external-files" path="." />
 </paths>

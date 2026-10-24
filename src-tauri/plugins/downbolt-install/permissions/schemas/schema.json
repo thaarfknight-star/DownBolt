@@ -295,6 +295,18 @@
       "type": "string",
       "oneOf": [
         {
+          "description": "Enables the delete_published command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-delete-published",
+          "markdownDescription": "Enables the delete_published command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_published command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-delete-published",
+          "markdownDescription": "Denies the delete_published command without any pre-configured scope."
+        },
+        {
           "description": "Enables the install_apk command without any pre-configured scope.",
           "type": "string",
           "const": "allow-install-apk",
@@ -305,6 +317,42 @@
           "type": "string",
           "const": "deny-install-apk",
           "markdownDescription": "Denies the install_apk command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-file",
+          "markdownDescription": "Enables the open_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-file",
+          "markdownDescription": "Denies the open_file command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the publish_to_downloads command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-publish-to-downloads",
+          "markdownDescription": "Enables the publish_to_downloads command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the publish_to_downloads command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-publish-to-downloads",
+          "markdownDescription": "Denies the publish_to_downloads command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the share_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-share-file",
+          "markdownDescription": "Enables the share_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the share_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-share-file",
+          "markdownDescription": "Denies the share_file command without any pre-configured scope."
         }
       ]
     }

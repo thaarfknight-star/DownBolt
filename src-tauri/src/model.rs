@@ -29,6 +29,8 @@ pub struct DownloadItem {
     pub speed: u64,
     pub status: DownloadStatus,
     pub error: Option<String>,
+    /// URI ورودیِ منتشرشده در Downloads عمومی اندروید (فقط موبایل).
+    pub public_uri: Option<String>,
     /// زمان ساخت به ISO-8601 (UTC)
     pub created_at: String,
 }
@@ -84,6 +86,11 @@ pub struct DownloadRecord {
     pub url: String,
     pub file_name: String,
     pub dest_path: String,
+    /// URI ورودیِ منتشرشده در Downloads عمومی اندروید (MediaStore یا
+    /// مسیر فایل شاخه‌ی قدیمی)؛ روی دسکتاپ و رکوردهای قدیمی None است.
+    /// حذف از دیسک همین ورودی را هم پاک می‌کند.
+    #[serde(default)]
+    pub public_uri: Option<String>,
     pub size: Option<u64>,
     pub downloaded: u64,
     pub speed: u64,
@@ -103,6 +110,7 @@ impl DownloadRecord {
             speed: self.speed,
             status: self.status,
             error: self.error.clone(),
+            public_uri: self.public_uri.clone(),
             created_at: self.created_at.clone(),
         }
     }

@@ -6,7 +6,11 @@
     "core:default",
     "dialog:default",
     "downbolt-install:default",
-    "downbolt-install:allow-install-apk"
+    "downbolt-install:allow-install-apk",
+    "downbolt-install:allow-publish-to-downloads",
+    "downbolt-install:allow-delete-published",
+    "downbolt-install:allow-open-file",
+    "downbolt-install:allow-share-file"
   ],
   "windows": [
     "main"

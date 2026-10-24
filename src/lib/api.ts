@@ -8,7 +8,10 @@
 //   remove_download({ id, deleteFile })   -> void
 //   get_settings()                        -> DmSettings
 //   set_settings({ settings })            -> void
-//   pick_download_dir()                   -> string | null   (دیالوگ انتخاب پوشه)
+//   pick_download_dir()                   -> string | null   (دیالوگ انتخاب پوشه؛ فقط دسکتاپ — روی اندروید UI آن را نشان نمی‌دهد)
+//   app_platform()                        -> string          ("android" یا "desktop" برای گیت UI موبایل)
+//   open_download({ id })                 -> void            (باز کردن فایل با برنامه‌ی مناسب؛ فقط اندروید)
+//   share_download({ id })                -> void            (اشتراک‌گذاری فایل؛ فقط اندروید)
 //   read_clipboard()                      -> string          (متن کلیپ‌بورد؛ اگر نبود، فرانت fallback دارد)
 // رویداد (اختیاری ولی توصیه‌شده): بک‌اند هر تغییر/تیک پیشرفت را با
 //   emit("download-progress", DownloadItem[])  (اسنپ‌شات کامل لیست) بفرستد؛
@@ -68,6 +71,9 @@ export const api = {
   resumeDownload: (id: string): Promise<void> => invoke("resume_download", { id }),
   removeDownload: (id: string, deleteFile = false): Promise<void> =>
     invoke("remove_download", { id, deleteFile }),
+  platform: (): Promise<string> => invoke("app_platform"),
+  openDownload: (id: string): Promise<void> => invoke("open_download", { id }),
+  shareDownload: (id: string): Promise<void> => invoke("share_download", { id }),
   checkUpdate: (): Promise<UpdateInfo | null> => invoke("check_update2"),
   downloadUpdate: (): Promise<void> => invoke("download_update2"),
   cancelUpdateDownload: (): Promise<void> => invoke("cancel_update_download2"),

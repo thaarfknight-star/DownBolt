@@ -63,6 +63,8 @@ interface RowRefs {
   eta: HTMLElement;
   status: HTMLElement;
   toggleBtn: HTMLButtonElement;
+  openBtn: HTMLButtonElement;
+  shareBtn: HTMLButtonElement;
 }
 
 export function mountApp(root: HTMLElement): void {
@@ -116,6 +118,7 @@ export function mountApp(root: HTMLElement): void {
           <button id="pickDirBtn" class="btn" type="button">انتخاب پوشه…</button>
         </span>
       </label>
+      <p id="androidDirNote" class="muted" hidden>روی اندروید، فایل‌های کامل‌شده در پوشه‌ی Downloads عمومی ذخیره می‌شوند و «حذف فایل» نسخه‌ی عمومی را هم پاک می‌کند؛ انتخاب پوشه روی موبایل ممکن نیست.</p>
       <div class="field-grid">
         <label class="field">
           <span>سقف اتصال موازی هر دانلود (۱ تا ۱۶)</span>
@@ -187,6 +190,9 @@ export function mountApp(root: HTMLElement): void {
   /* ── رندر کلیددار لیست: هر ردیف یک بار ساخته می‌شود و بعد فقط فیلدهایش به‌روز می‌شود ── */
   const rows = new Map<string, RowRefs>();
   let items: DownloadItem[] = [];
+  // روی اندروید: انتخاب پوشه پنهان می‌شود و دکمه‌های باز کردن/
+  // اشتراک‌گذاری برای دانلودهای کامل‌شده نشان داده می‌شوند.
+  let isAndroid = false;
 
   function buildRow(it: DownloadItem): RowRefs {
     const el = document.createElement("article");
@@ -208,6 +214,8 @@ export function mountApp(root: HTMLElement): void {
       </div>
       <div class="dl-actions">
         <button class="btn small toggle" type="button"></button>
+        <button class="btn small open-file" type="button">باز کردن</button>
+        <button class="btn small share-file" type="button">اشتراک‌گذاری</button>
         <button class="btn small danger remove" type="button">حذف</button>
         <button class="btn small danger remove-file" type="button">حذف فایل</button>
       </div>`;
@@ -221,8 +229,12 @@ export function mountApp(root: HTMLElement): void {
       eta: el.querySelector(".dl-eta")!,
       status: el.querySelector(".dl-status")!,
       toggleBtn: el.querySelector(".toggle")!,
+      openBtn: el.querySelector(".open-file")!,
+      shareBtn: el.querySelector(".share-file")!,
     };
     refs.toggleBtn.addEventListener("click", () => void onToggle(it.id));
+    refs.openBtn.addEventListener("click", () => void onOpen(it.id));
+    refs.shareBtn.addEventListener("click", () => void onShare(it.id));
     el.querySelector(".remove")!.addEventListener("click", () => void onRemove(it.id));
     el.querySelector(".remove-file")!.addEventListener("click", () => void onRemoveFile(it.id));
     return refs;
@@ -247,6 +259,11 @@ export function mountApp(root: HTMLElement): void {
     refs.toggleBtn.textContent =
       it.status === "downloading" || it.status === "queued" ? "⏸ مکث" : "▶ ادامه";
     refs.toggleBtn.disabled = it.status === "completed" || it.status === "error";
+    // باز کردن/اشتراک‌گذاری فقط روی اندروید و فقط برای فایل کامل‌شده
+    // (روی دسکتاپ فایل از قبل در پوشه‌ی کاربر دیده می‌شود).
+    const showFileActions = isAndroid && it.status === "completed";
+    refs.openBtn.hidden = !showFileActions;
+    refs.shareBtn.hidden = !showFileActions;
   }
 
   function render(): void {
@@ -321,6 +338,22 @@ export function mountApp(root: HTMLElement): void {
       void refresh();
     } catch (e) {
       toast("خطا در حذف: " + String((e as Error)?.message || e), true);
+    }
+  }
+
+  async function onOpen(id: string): Promise<void> {
+    try {
+      await api.openDownload(id);
+    } catch (e) {
+      toast("باز کردن فایل ناموفق بود: " + String((e as Error)?.message || e), true);
+    }
+  }
+
+  async function onShare(id: string): Promise<void> {
+    try {
+      await api.shareDownload(id);
+    } catch (e) {
+      toast("اشتراک‌گذاری ناموفق بود: " + String((e as Error)?.message || e), true);
     }
   }
 
@@ -408,6 +441,12 @@ export function mountApp(root: HTMLElement): void {
     }
   });
 
+  function applyAndroidUi(): void {
+    $<HTMLInputElement>("#setDir").disabled = isAndroid;
+    $<HTMLElement>("#pickDirBtn").hidden = isAndroid;
+    $<HTMLElement>("#androidDirNote").hidden = !isAndroid;
+  }
+
   $("#pickDirBtn").addEventListener("click", async () => {
     try {
       const dir = await api.pickDownloadDir();
@@ -434,6 +473,13 @@ export function mountApp(root: HTMLElement): void {
 
   /* ── چرخه‌ی به‌روزرسانی: رویداد بک‌اند + پول ۱ ثانیه‌ای ── */
   void onProgressSnapshot(applySnapshot).catch(() => undefined);
+  // تشخیص سکو برای UI اندروید (پنهان‌کردن انتخاب پوشه، دکمه‌های
+  // باز/اشتراک در ردیف‌ها) و رندر دوباره‌ی فهرست با آن.
+  void api.platform().then((p) => {
+    isAndroid = p === "android";
+    applyAndroidUi();
+    void refresh();
+  }).catch(() => undefined);
   void refresh();
   window.setInterval(() => void refresh(), 1000);
   /* ── بستن به سینی سیستم ── */

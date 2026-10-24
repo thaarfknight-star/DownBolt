@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-delete-published"
+description = "Enables the delete_published command without any pre-configured scope."
+commands.allow = ["delete_published"]
+
+[[permission]]
+identifier = "deny-delete-published"
+description = "Denies the delete_published command without any pre-configured scope."
+commands.deny = ["delete_published"]

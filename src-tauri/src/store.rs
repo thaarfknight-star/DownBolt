@@ -71,6 +71,7 @@ mod tests {
             speed: 0,
             status: DownloadStatus::Paused,
             error: None,
+            public_uri: None,
             created_at: "2026-10-23T01:40:44Z".into(),
         });
         d

@@ -19,6 +19,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
+#[cfg(target_os = "android")] // مصرف‌کننده‌های downbolt_install همه اندرویدی‌اند
+use tauri_plugin_downbolt_install::DownboltInstallExt;
 #[cfg(desktop)] // انتخاب‌گر پوشه فقط دسکتاپ است (pick_download_dir_impl)
 use tauri_plugin_dialog::DialogExt;
 
@@ -82,6 +84,23 @@ fn remove_download(
     id: String,
     delete_file: bool,
 ) -> Result<(), String> {
+    // روی اندروید، «حذف فایل» ورودیِ منتشرشده در Downloads عمومی را هم
+    // پاک می‌کند؛ خطای آن مثل خطای پاک‌کردن فایل، رکورد را نگه می‌دارد
+    // تا کاربر دوباره تلاش کند.
+    #[cfg(target_os = "android")]
+    if delete_file {
+        let uri = state
+            .manager
+            .lock()
+            .unwrap()
+            .get(&id)
+            .and_then(|r| r.public_uri);
+        if let Some(uri) = uri {
+            app.downbolt_install()
+                .delete_published(uri)
+                .map_err(|e| format!("ورودی Downloads عمومی پاک نشد: {e}"))?;
+        }
+    }
     let mut mgr = state.manager.lock().unwrap();
     mgr.remove(&id, delete_file)?;
     emit_snapshot(&app, &mgr);
@@ -131,9 +150,87 @@ async fn pick_download_dir_impl(app: &AppHandle) -> Option<String> {
 }
 
 /// نسخه‌ی موبایل: انتخاب‌گر پوشه وجود ندارد — بدون تغییر پوشه.
+/// فرانت روی اندروید این دکمه را اصلاً نشان نمی‌دهد (به‌جاش توضیح
+/// Downloads عمومی آمده) تا دکمه‌ی بی‌اثرِ بی‌صدا نماند؛ فایل‌های
+/// کامل‌شده روی اندروید با publish_to_downloads در Downloads عمومی
+/// منتشر می‌شوند.
 #[cfg(mobile)]
 async fn pick_download_dir_impl(_app: &AppHandle) -> Option<String> {
     None
+}
+
+/// سکوی در حال اجرا برای فرانت ("android" یا "desktop") — فرانت با آن
+/// دکمه‌ی انتخاب پوشه را روی اندروید پنهان و دکمه‌های باز کردن/
+/// اشتراک‌گذاری را فقط برای دانلودهای کامل‌شده‌ی اندروید نشان می‌دهد.
+#[tauri::command]
+fn app_platform() -> &'static str {
+    #[cfg(target_os = "android")]
+    {
+        "android"
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        "desktop"
+    }
+}
+
+/// حدس MIME از پسوند نام فایل (برای Intent باز کردن/اشتراک‌گذاری اندروید).
+#[cfg(target_os = "android")]
+fn mime_for(file_name: &str) -> &'static str {
+    let ext = file_name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "zip" => "application/zip",
+        "apk" => "application/vnd.android.package-archive",
+        "pdf" => "application/pdf",
+        "mp4" => "video/mp4",
+        "mkv" => "video/x-matroska",
+        "webm" => "video/webm",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "txt" => "text/plain",
+        "json" => "application/json",
+        _ => "application/octet-stream",
+    }
+}
+
+/// باز کردن فایل دانلود با برنامه‌ی مناسب سیستم — فقط اندروید (روی
+/// دسکتاپ فایل از قبل در پوشه‌ی کاربر دیده می‌شود و این کامند اصلاً
+/// ثبت نمی‌شود).
+#[cfg(target_os = "android")]
+#[tauri::command]
+fn open_download(app: AppHandle, state: State<AppState>, id: String) -> Result<(), String> {
+    let rec = state
+        .manager
+        .lock()
+        .unwrap()
+        .get(&id)
+        .ok_or_else(|| "دانلودی با این شناسه پیدا نشد.".to_string())?;
+    app.downbolt_install().open_file(
+        rec.dest_path,
+        rec.public_uri,
+        mime_for(&rec.file_name).to_string(),
+    )
+}
+
+/// اشتراک‌گذاری فایل دانلود با chooser سیستم — فقط اندروید.
+#[cfg(target_os = "android")]
+#[tauri::command]
+fn share_download(app: AppHandle, state: State<AppState>, id: String) -> Result<(), String> {
+    let rec = state
+        .manager
+        .lock()
+        .unwrap()
+        .get(&id)
+        .ok_or_else(|| "دانلودی با این شناسه پیدا نشد.".to_string())?;
+    app.downbolt_install().share_file(
+        rec.dest_path,
+        rec.public_uri,
+        mime_for(&rec.file_name).to_string(),
+    )
 }
 
 /// متن کلیپ‌بورد برای چسباندن سریع لینک؛ خطا به فرانت می‌رسد تا fallback
@@ -187,10 +284,52 @@ pub fn run() {
                 let mut last_emit = Instant::now() - Duration::from_millis(300);
                 let mut last_save = Instant::now();
                 for evt in events_rx {
+                    // شناسه‌ی دانلودی که همین رویداد کاملش می‌کند — برای
+                    // انتشار در Downloads عمومی اندروید بعد از اعمال رویداد.
+                    #[cfg(target_os = "android")]
+                    let completed_id = match &evt {
+                        EngineEvent::Completed { id, .. } => Some(id.clone()),
+                        _ => None,
+                    };
                     let state = handle.state::<AppState>();
                     let mut mgr = state.manager.lock().unwrap();
                     match mgr.apply_event(evt) {
                         AppliedEffect::StateChanged => {
+                            // روی اندروید، فایل کامل‌شده در Downloads عمومی
+                            // منتشر می‌شود تا در فایل‌منیجر دیده شود.
+                            // بهترین‌تلاش است: خطا دانلود را خراب نمی‌کند —
+                            // فایل از مسیر داخلی با باز کردن/اشتراک‌گذاری
+                            // همچنان در دسترس است.
+                            #[cfg(target_os = "android")]
+                            if let Some(id) = completed_id {
+                                if let Some(rec) = mgr.get(&id) {
+                                    // گارد is_none: رویداد تکراری Completed
+                                    // ورودی یتیمِ دوم در MediaStore نسازد.
+                                    if rec.status == model::DownloadStatus::Completed
+                                        && rec.public_uri.is_none()
+                                    {
+                                        // انتشار بهترین‌تلاش است، ولی خطا
+                                        // دیگر بی‌صدا قورت داده نمی‌شود —
+                                        // همان سکوت بود که باگ نام را نامرئی
+                                        // کرده بود.
+                                        let mime = mime_for(&rec.file_name).to_string();
+                                        match handle.downbolt_install().publish_to_downloads(
+                                            rec.dest_path,
+                                            rec.file_name,
+                                            mime,
+                                        ) {
+                                            Ok(uri) => {
+                                                let _ = mgr.set_public_uri(&id, uri);
+                                            }
+                                            Err(e) => {
+                                                eprintln!(
+                                                    "DownBolt: انتشار در Downloads عمومی ناموفق بود: {e}"
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             emit_snapshot(&handle, &mgr);
                             last_emit = Instant::now();
                             last_save = Instant::now();
@@ -274,6 +413,11 @@ pub fn run() {
             get_settings,
             set_settings,
             pick_download_dir,
+            app_platform,
+            #[cfg(target_os = "android")]
+            open_download,
+            #[cfg(target_os = "android")]
+            share_download,
             read_clipboard,
             set_close_to_tray,
             updater::check_update2,
