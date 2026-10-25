@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-sync-notification"
+description = "Enables the sync_notification command without any pre-configured scope."
+commands.allow = ["sync_notification"]
+
+[[permission]]
+identifier = "deny-sync-notification"
+description = "Denies the sync_notification command without any pre-configured scope."
+commands.deny = ["sync_notification"]

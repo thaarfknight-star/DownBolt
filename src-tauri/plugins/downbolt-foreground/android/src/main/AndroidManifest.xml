@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- سرویس foreground برای زنده نگه‌داشتن دانلود در بک‌گراند.
+         FOREGROUND_SERVICE از اندروید ۹ و FOREGROUND_SERVICE_DATA_SYNC
+         از اندروید ۱۴ لازم‌اند؛ POST_NOTIFICATIONS از اندروید ۱۳
+         مجوز ران‌تایم است و نبودنش فقط نوتیفیکیشن را مخفی می‌کند،
+         نه سرویس را (درخواستش بهترین‌تلاش در ForegroundPlugin است).
+         در نسخه‌های قدیمی‌تر، مجوزهای ناشناخته نادیده گرفته می‌شوند. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <application>
+        <service
+            android:name="ir.downbolt.plugin.foreground.DownloadForegroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+        <receiver
+            android:name="ir.downbolt.plugin.foreground.DownloadActionReceiver"
+            android:exported="false" />
+    </application>
+</manifest>

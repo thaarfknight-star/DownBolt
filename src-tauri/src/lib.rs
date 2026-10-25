@@ -15,6 +15,8 @@ mod updater;
 use engine::{EngineEvent, RealEngine};
 use manager::{AppliedEffect, DownloadManager};
 use model::{DmSettings, DownloadItem, PostDownloadAction};
+#[cfg(target_os = "android")] // فقط refresh_foreground و هوک حلقه‌ی رویداد از آن استفاده می‌کنند
+use model::DownloadStatus;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -23,6 +25,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 #[cfg(target_os = "android")] // مصرف‌کننده‌های downbolt_install همه اندرویدی‌اند
 use tauri_plugin_downbolt_install::DownboltInstallExt;
+#[cfg(target_os = "android")]
+use tauri_plugin_downbolt_foreground::DownboltForegroundExt;
 #[cfg(desktop)] // انتخاب‌گر پوشه فقط دسکتاپ است (pick_download_dir_impl)
 use tauri_plugin_dialog::DialogExt;
 
@@ -230,6 +234,7 @@ fn pause_download(app: AppHandle, state: State<AppState>, id: String) -> Result<
     let mut mgr = state.manager.lock().unwrap();
     mgr.pause(&id)?;
     emit_snapshot(&app, &mgr);
+    refresh_foreground(&app, &mgr);
     Ok(())
 }
 
@@ -238,6 +243,57 @@ fn resume_download(app: AppHandle, state: State<AppState>, id: String) -> Result
     let mut mgr = state.manager.lock().unwrap();
     mgr.resume(&id)?;
     emit_snapshot(&app, &mgr);
+    refresh_foreground(&app, &mgr);
+    Ok(())
+}
+
+/// هم‌گام‌سازی سرویس foreground اندروید با وضعیت فعلی (۰٫۶٫۶):
+/// دانلود فعال هست → sync با تعداد فعال و سرعت کلی؛ وگرنه stop.
+/// روی دسکتاپ no-op است (سینی سیستم دست‌نخورده).
+#[cfg(target_os = "android")]
+fn refresh_foreground(app: &AppHandle, mgr: &DownloadManager) {
+    let items = mgr.list();
+    let active: Vec<&DownloadItem> = items
+        .iter()
+        .filter(|i| i.status == DownloadStatus::Downloading)
+        .collect();
+    if active.is_empty() {
+        if let Err(e) = app.downbolt_foreground().stop_notification() {
+            eprintln!("DownBolt: توقف نوتیفیکیشن foreground ناموفق بود: {e}");
+        }
+    } else {
+        let total_speed: u64 = active.iter().map(|i| i.speed).sum();
+        if let Err(e) = app
+            .downbolt_foreground()
+            .sync_notification(active.len() as u32, total_speed)
+        {
+            eprintln!("DownBolt: هم‌گام‌سازی نوتیفیکیشن foreground ناموفق بود: {e}");
+        }
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+fn refresh_foreground(_app: &AppHandle, _mgr: &DownloadManager) {}
+
+/// توقف همه‌ی دانلودهای فعال (۰٫۶٫۶، اکشن نوتیفیکیشن اندروید) —
+/// یک قفل، نه لوپ فرانت؛ با refresh_foreground، نوتیفیکیشن هم همان
+/// لحظه برداشته می‌شود.
+#[tauri::command]
+fn pause_all_downloads(app: AppHandle, state: State<AppState>) -> Result<(), String> {
+    let mut mgr = state.manager.lock().unwrap();
+    mgr.pause_all()?;
+    emit_snapshot(&app, &mgr);
+    refresh_foreground(&app, &mgr);
+    Ok(())
+}
+
+/// شروع همه‌ی مکث‌شده‌ها و خطادارها (۰٫۶٫۶، اکشن نوتیفیکیشن اندروید).
+#[tauri::command]
+fn resume_all_downloads(app: AppHandle, state: State<AppState>) -> Result<(), String> {
+    let mut mgr = state.manager.lock().unwrap();
+    mgr.resume_all()?;
+    emit_snapshot(&app, &mgr);
+    refresh_foreground(&app, &mgr);
     Ok(())
 }
 
@@ -421,6 +477,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_downbolt_install::init())
+        .plugin(tauri_plugin_downbolt_foreground::init())
         .setup(|app| {
             let data_dir = app
                 .path()
@@ -444,6 +501,61 @@ pub fn run() {
                 manager: Mutex::new(manager),
             });
 
+            // نخ صندوق‌پستی اکشن‌های نوتیفیکیشن (۰٫۶٫۶، فقط اندروید):
+            // گیرنده‌ی اکشن‌ها به AppHandle دسترسی ندارد، پس درخواست
+            // را در dataDir/fg_action.json می‌نویسد و این نخ هر ثانیه
+            // آن را می‌خواند و اجرا می‌کند. فایل اتمی نوشته می‌شود
+            // (tmp + rename) پس خواندنِ نیمه‌کاره پیش نمی‌آید و خطای
+            // parse یعنی فایل خراب است و پاک می‌شود تا حلقه‌ی مسموم
+            // نسازد.
+            #[cfg(target_os = "android")]
+            {
+                let mailbox_handle = app.handle().clone();
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(Duration::from_secs(1));
+                    let mailbox = match mailbox_handle
+                        .path()
+                        .app_data_dir()
+                        .map(|d| d.join("fg_action.json"))
+                    {
+                        Ok(p) => p,
+                        Err(_) => continue,
+                    };
+                    let raw = match std::fs::read_to_string(&mailbox) {
+                        Ok(r) => r,
+                        Err(_) => continue,
+                    };
+                    let action = serde_json::from_str::<serde_json::Value>(&raw)
+                        .ok()
+                        .and_then(|v| v.get("action")?.as_str()?.to_string());
+                    let _ = std::fs::remove_file(&mailbox);
+                    let Some(action) = action else { continue };
+                    match action.as_str() {
+                        "pause_all" | "resume_all" => {
+                            let state = mailbox_handle.state::<AppState>();
+                            let mut mgr = state.manager.lock().unwrap();
+                            let res = if action == "pause_all" {
+                                mgr.pause_all()
+                            } else {
+                                mgr.resume_all()
+                            };
+                            if res.is_ok() {
+                                emit_snapshot(&mailbox_handle, &mgr);
+                                refresh_foreground(&mailbox_handle, &mgr);
+                            }
+                        }
+                        "exit" => {
+                            // «خروج از برنامه»: توقف سرویس با مرگ پروسه
+                            // انجام می‌شود؛ دانلودهای فعال می‌ایستند ولی
+                            // با بازشدن دوباره، مکث‌شده برمی‌گردند و قابل
+                            // ادامه‌اند (نرمال‌سازی هنگام load).
+                            mailbox_handle.exit(0);
+                        }
+                        _ => {}
+                    }
+                });
+            }
+
             // حلقه‌ی رویداد موتور: رویدادها را روی وضعیت اعمال می‌کند؛
             // تغییر وضعیت → ذخیره + انتشار فوری؛ پیشرفت → انتشار حداکثر
             // هر ۲۵۰ms و ذخیره حداکثر هر ۱ ثانیه (اعداد اسپک، بخش ۲ و ۱۰).
@@ -451,6 +563,12 @@ pub fn run() {
             std::thread::spawn(move || {
                 let mut last_emit = Instant::now() - Duration::from_millis(300);
                 let mut last_save = Instant::now();
+                // وضعیت foreground برای throttle به‌روزرسانی نوتیفیکیشن
+                // (فقط اندروید؛ روی دسکتاپ این متغیرها کامپایل نمی‌شوند).
+                #[cfg(target_os = "android")]
+                let mut fg_running = false;
+                #[cfg(target_os = "android")]
+                let mut last_fg_sync = Instant::now() - Duration::from_secs(2);
                 for evt in events_rx {
                     // شناسه‌ی دانلودی که همین رویداد کاملش می‌کند — برای
                     // انتشار در Downloads عمومی اندروید بعد از اعمال رویداد.
@@ -517,6 +635,26 @@ pub fn run() {
                         }
                         AppliedEffect::Ignored => {}
                     }
+                    // هم‌گام‌سازی foreground (۰٫۶٫۶، فقط اندروید): با
+                    // هر رویداد، اگر وضعیت فعال‌بودن عوض شده یا یک
+                    // ثانیه از آخرین به‌روزرسانی گذشته، نوتیفیکیشن
+                    // به‌روز می‌شود؛ وگرنه صدا زده نمی‌شود تا
+                    // نوتیفیکیشن با هر پیشرفت اسپم نشود.
+                    #[cfg(target_os = "android")]
+                    {
+                        let active = mgr
+                            .list()
+                            .iter()
+                            .any(|i| i.status == DownloadStatus::Downloading);
+                        let now = Instant::now();
+                        if active != fg_running
+                            || (active && now.duration_since(last_fg_sync) >= Duration::from_secs(1))
+                        {
+                            refresh_foreground(&handle, &mgr);
+                            fg_running = active;
+                            last_fg_sync = now;
+                        }
+                    }
                 }
             });
 
@@ -580,6 +718,8 @@ pub fn run() {
             add_download,
             pause_download,
             resume_download,
+            pause_all_downloads,
+            resume_all_downloads,
             remove_download,
             get_settings,
             set_settings,

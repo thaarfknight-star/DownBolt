@@ -1,6 +1,6 @@
 [package]
 name = "download-manager"
-version = "0.6.5"
+version = "0.6.6"
 description = "DownBolt — دانلودمنیجر دسکتاپ (Rust + Tauri)"
 edition = "2021"
 
@@ -16,6 +16,7 @@ tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-downbolt-install = { path = "plugins/downbolt-install" }
+tauri-plugin-downbolt-foreground = { path = "plugins/downbolt-foreground" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = "2"

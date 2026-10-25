@@ -190,6 +190,47 @@ impl DownloadManager {
         }
     }
 
+    /// توقف همه (۰٫۶٫۶، اکشن نوتیفیکیشن اندروید): همه‌ی در حال
+    /// دانلودها را مکث می‌کند. چون pause() خودش pump می‌کند و جای
+    /// خالی را تسک صف می‌گیرد، حلقه تا وقتی دانلود فعالی هست تکرار
+    /// می‌شود — وگرنه تسکی که تازه شروع شده از قلم می‌افتاد. صف
+    /// متناهی است پس حلقه حتماً تمام می‌شود.
+    pub fn pause_all(&mut self) -> Result<(), String> {
+        loop {
+            let downloading: Vec<String> = self
+                .records
+                .iter()
+                .filter(|r| r.status == DownloadStatus::Downloading)
+                .map(|r| r.id.clone())
+                .collect();
+            if downloading.is_empty() {
+                return Ok(());
+            }
+            for id in downloading {
+                self.pause(&id)?;
+            }
+        }
+    }
+
+    /// شروع همه (۰٫۶٫۶، اکشن نوتیفیکیشن اندروید): همه‌ی مکث‌شده‌ها و
+    /// خطادارها را به صف برمی‌گرداند؛ pump خودش تا سقف موازی شروعشان
+    /// می‌کند و بقیه در صف می‌مانند. تسک‌های در صف از قبل در نوبت‌اند
+    /// و کاری ندارند.
+    pub fn resume_all(&mut self) -> Result<(), String> {
+        let ids: Vec<String> = self
+            .records
+            .iter()
+            .filter(|r| {
+                r.status == DownloadStatus::Paused || r.status == DownloadStatus::Error
+            })
+            .map(|r| r.id.clone())
+            .collect();
+        for id in ids {
+            self.resume(&id)?;
+        }
+        Ok(())
+    }
+
     /// حذف تسک از فهرست؛ اگر در حال دانلود بود اول لغو می‌شود.
     /// delete_file=true فایل مقصد روی دیسک را هم پاک می‌کند.
     /// حذف تسک از فهرست؛ موتور اول کامل لغو و نخش join می‌شود تا موقع
@@ -626,6 +667,42 @@ mod tests {
             total: 200,
         });
         assert!(mgr.all_finished(), "حالا همه کامل‌اند");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pause_all_pauses_newly_started_too() {
+        // ۰٫۶٫۶: با سقف ۱، مکثِ اولی دومی را شروع می‌کند؛ pause_all
+        // باید دومیِ تازه‌شروع‌شده را هم بگیرد، نه فقط اولی را.
+        let (mut mgr, dir, _e) = manager_with(1, false);
+        let a = mgr.add("https://ex.com/a.zip").unwrap();
+        let b = mgr.add("https://ex.com/b.zip").unwrap();
+        assert_eq!(a.status, DownloadStatus::Downloading);
+        assert_eq!(b.status, DownloadStatus::Queued);
+        mgr.pause_all().unwrap();
+        let items = mgr.list();
+        assert_eq!(items[0].status, DownloadStatus::Paused);
+        assert_eq!(items[1].status, DownloadStatus::Paused);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resume_all_restarts_paused_and_error() {
+        // ۰٫۶٫۶: مکث‌شده و خطادار هر دو به صف/شروع برمی‌گردند؛
+        // خطا پاک می‌شود؛ کامل‌شده دست نمی‌خورد.
+        let (mut mgr, dir, _e) = manager_with(2, false);
+        let a = mgr.add("https://ex.com/a.zip").unwrap();
+        let b = mgr.add("https://ex.com/b.zip").unwrap();
+        mgr.pause(&a.id).unwrap();
+        mgr.pause(&b.id).unwrap();
+        // b را دستی خطادار کن (مثل شکست موتور).
+        mgr.records[1].status = DownloadStatus::Error;
+        mgr.records[1].error = Some("خطای ساختگی".into());
+        mgr.resume_all().unwrap();
+        let items = mgr.list();
+        assert_eq!(items[0].status, DownloadStatus::Downloading);
+        assert_eq!(items[1].status, DownloadStatus::Downloading);
+        assert!(items[1].error.is_none(), "خطا با resume پاک می‌شود");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

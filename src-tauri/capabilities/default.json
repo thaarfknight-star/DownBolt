@@ -10,7 +10,10 @@
     "downbolt-install:allow-publish-to-downloads",
     "downbolt-install:allow-delete-published",
     "downbolt-install:allow-open-file",
-    "downbolt-install:allow-share-file"
+    "downbolt-install:allow-share-file",
+    "downbolt-foreground:default",
+    "downbolt-foreground:allow-sync-notification",
+    "downbolt-foreground:allow-stop-notification"
   ],
   "windows": [
     "main"
