@@ -116,7 +116,10 @@ body {
 .speed-chart { width: 100%; height: 110px; display: block; }
 
 /* ── لیست دانلودها ───────────────────── */
-.list { display: flex; flex-direction: column; gap: 10px; }
+/* نکته: display فقط با ‎:not([hidden])‎ می‌آید، وگرنه قانون display روی
+   صفت hidden مرورگر می‌چربد و صفحه‌ی پنهان هم دیده می‌شود (باگ ۰٫۶٫۴:
+   با زدن هر تب، هر دو لیست دیده می‌شدند). */
+.list:not([hidden]) { display: flex; flex-direction: column; gap: 10px; }
 .dl { display: flex; gap: 14px; padding: 14px 16px; align-items: flex-start; }
 .dl-ic {
   flex: 0 0 44px; width: 44px; height: 44px; border-radius: 12px; color: var(--neon);
