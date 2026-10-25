@@ -158,7 +158,20 @@ body {
 
 /* ── صفحه‌ی تنظیمات (۰٫۶٫۳: نمای جدا) ─── */
 .app.settings-open .addbar, .app.settings-open .stats,
-.app.settings-open .chart-card, .app.settings-open .list { display: none; }
+.app.settings-open .chart-card, .app.settings-open .dl-nav,
+.app.settings-open .list { display: none; }
+
+/* ── ناوبری دو صفحه‌ی دانلود (۰٫۶٫۴) ── */
+.dl-nav { display: flex; gap: 10px; margin-bottom: 14px; }
+.dl-tab.active {
+  background: linear-gradient(90deg, var(--neon), var(--neon-2)); color: #06121f; font-weight: 700; border: none;
+}
+.dl-tab.active:hover { box-shadow: 0 0 16px rgba(34, 211, 238, 0.5); }
+.dl-count {
+  display: inline-block; min-width: 22px; padding: 1px 7px; border-radius: 999px;
+  background: rgba(0, 0, 0, 0.25); font-size: 12.5px; font-weight: 700; text-align: center;
+}
+.dl-tab:not(.active) .dl-count { background: rgba(34, 211, 238, 0.12); color: #a5f3fc; }
 .settings-page:not([hidden]) { display: flex; flex-direction: column; gap: 14px; }
 .settings-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .settings-head h2 { margin: 0; font-size: 19px; }

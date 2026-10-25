@@ -1,6 +1,6 @@
 [package]
 name = "download-manager"
-version = "0.6.3"
+version = "0.6.4"
 description = "DownBolt — دانلودمنیجر دسکتاپ (Rust + Tauri)"
 edition = "2021"
 

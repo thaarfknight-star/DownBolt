@@ -112,7 +112,14 @@ export function mountApp(root: HTMLElement): void {
       <canvas id="speedChart" class="speed-chart"></canvas>
     </section>
 
-    <main id="listWrap" class="list"></main>
+    <!-- ناوبری دو صفحه‌ی دانلود (۰٫۶٫۴): در حال دانلود / دانلود شده‌ها -->
+    <nav class="dl-nav">
+      <button id="tabActive" class="btn dl-tab active" type="button">در حال دانلود <span id="countActive" class="dl-count">۰</span></button>
+      <button id="tabDone" class="btn dl-tab" type="button">دانلود شده‌ها <span id="countDone" class="dl-count">۰</span></button>
+    </nav>
+
+    <main id="listActive" class="list"></main>
+    <main id="listDone" class="list" hidden></main>
 
     <!-- صفحه‌ی تنظیمات (۰٫۶٫۳): نمای جدا — با باز شدنش، بخش‌های دانلود
          پنهان می‌شوند (کلاس settings-open روی .app) و تنظیمات به‌صورت
@@ -213,7 +220,12 @@ export function mountApp(root: HTMLElement): void {
 
   const $ = <T extends HTMLElement>(sel: string) => root.querySelector<T>(sel)!;
   const urlInput = $<HTMLInputElement>("#urlInput");
-  const listWrap = $<HTMLElement>("#listWrap");
+  const listActive = $<HTMLElement>("#listActive");
+  const listDone = $<HTMLElement>("#listDone");
+  const tabActive = $<HTMLButtonElement>("#tabActive");
+  const tabDone = $<HTMLButtonElement>("#tabDone");
+  const countActive = $<HTMLElement>("#countActive");
+  const countDone = $<HTMLElement>("#countDone");
   const totalSpeedEl = $<HTMLElement>("#totalSpeed");
   const chartNowEl = $<HTMLElement>("#chartNow");
   const toastEl = $<HTMLElement>("#toast");
@@ -226,6 +238,24 @@ export function mountApp(root: HTMLElement): void {
     settingsPage.hidden = !show;
     appEl.classList.toggle("settings-open", show);
   }
+
+  // دو صفحه‌ی دانلود (۰٫۶٫۴): «در حال دانلود» = هرچه هنوز کامل نشده
+  // (در حال دانلود، در صف، مکث، خطا)؛ «دانلود شده‌ها» = فقط کامل‌شده‌ها.
+  // صفحه‌ی آخر انتخاب‌شده به خاطر سپرده می‌شود.
+  type DlPage = "active" | "done";
+  const DL_PAGE_KEY = "dm_dl_page";
+  let dlPage: DlPage = localStorage.getItem(DL_PAGE_KEY) === "done" ? "done" : "active";
+  function showDlPage(which: DlPage): void {
+    dlPage = which;
+    localStorage.setItem(DL_PAGE_KEY, which);
+    listActive.hidden = which !== "active";
+    listDone.hidden = which !== "done";
+    tabActive.classList.toggle("active", which === "active");
+    tabDone.classList.toggle("active", which === "done");
+  }
+  tabActive.addEventListener("click", () => showDlPage("active"));
+  tabDone.addEventListener("click", () => showDlPage("done"));
+  showDlPage(dlPage);
 
   const chart = new SpeedChart($<HTMLCanvasElement>("#speedChart"));
   window.addEventListener("resize", () => chart.resize());
@@ -319,18 +349,35 @@ export function mountApp(root: HTMLElement): void {
     refs.shareBtn.hidden = !showFileActions;
   }
 
+  // جای خالی هر صفحه (یک بار ساخته می‌شود؛ با innerHTML پاک نمی‌شود
+  // تا ردیف‌های کلیددار سالم بمانند).
+  const emptyActive = document.createElement("div");
+  emptyActive.className = "empty card";
+  emptyActive.innerHTML = `<div class="empty-ic">⬇</div>
+    <p>دانلودی در حال انجام نیست.</p>
+    <p class="muted">لینک فایل را در کادر بالا بچسبانید یا از دکمه‌ی «از کلیپ‌بورد» استفاده کنید.</p>`;
+  const emptyDone = document.createElement("div");
+  emptyDone.className = "empty card";
+  emptyDone.innerHTML = `<div class="empty-ic">✓</div>
+    <p>هنوز دانلودی کامل نشده است.</p>
+    <p class="muted">دانلودهای کامل‌شده اینجا می‌آیند.</p>`;
+
   function render(): void {
-    if (items.length > 0) listWrap.querySelector(".empty")?.remove();
     const seen = new Set<string>();
+    let nActive = 0;
+    let nDone = 0;
     for (const it of items) {
       seen.add(it.id);
       let refs = rows.get(it.id);
       if (!refs) {
         refs = buildRow(it);
         rows.set(it.id, refs);
-        listWrap.appendChild(refs.el);
       }
+      // ردیف با appendChild بین دو صفحه جابه‌جا می‌شود؛ ref کلیددار سالم می‌ماند.
+      (it.status === "completed" ? listDone : listActive).appendChild(refs.el);
       updateRow(refs, it);
+      if (it.status === "completed") nDone++;
+      else nActive++;
     }
     for (const [id, refs] of rows) {
       if (!seen.has(id)) {
@@ -338,14 +385,12 @@ export function mountApp(root: HTMLElement): void {
         rows.delete(id);
       }
     }
-    if (items.length === 0) {
-      listWrap.innerHTML = `<div class="empty card">
-        <div class="empty-ic">⬇</div>
-        <p>هنوز دانلودی ندارید.</p>
-        <p class="muted">لینک فایل را در کادر بالا بچسبانید یا از دکمه‌ی «از کلیپ‌بورد» استفاده کنید.</p>
-      </div>`;
-      rows.clear();
-    }
+    if (nActive === 0) listActive.appendChild(emptyActive);
+    else emptyActive.remove();
+    if (nDone === 0) listDone.appendChild(emptyDone);
+    else emptyDone.remove();
+    countActive.textContent = faInt(nActive);
+    countDone.textContent = faInt(nDone);
 
     const totalSpeed = items.reduce((s, i) => s + (i.status === "downloading" ? i.speed : 0), 0);
     totalSpeedEl.textContent = fmtSpeed(totalSpeed);
@@ -458,6 +503,7 @@ export function mountApp(root: HTMLElement): void {
       await api.addDownload(url);
       urlInput.value = "";
       toast("دانلود اضافه شد.");
+      showDlPage("active");
       void refresh();
     } catch (e) {
       toast("افزودن دانلود ناموفق بود: " + String((e as Error)?.message || e), true);
