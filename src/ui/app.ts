@@ -544,6 +544,71 @@ export function mountApp(root: HTMLElement): void {
     else toast("متن کلیپ‌بورد لینک دانلود نیست؛ در کادر قرار گرفت.");
   });
 
+  /* ── درگ‌دراپ لینک: رها کردن لینک روی هرجای پنجره = افزودن دانلود ── */
+  const dropOverlay = document.createElement("div");
+  dropOverlay.className = "drop-overlay";
+  dropOverlay.innerHTML = `<div class="drop-overlay-card"><div class="drop-overlay-ic">⬇</div><p>لینک را رها کنید تا دانلود شود</p></div>`;
+  dropOverlay.hidden = true;
+  root.appendChild(dropOverlay);
+
+  // شمارنده‌ی ورود/خروج: dragleave موقع رد شدن از روی بچه‌ها هم می‌آید.
+  let dragDepth = 0;
+  function dragCarriesLink(e: DragEvent): boolean {
+    const types: readonly string[] = e.dataTransfer?.types ?? [];
+    return types.includes("text/uri-list") || types.includes("text/plain");
+  }
+  function hideDropOverlay(): void {
+    dragDepth = 0;
+    dropOverlay.hidden = true;
+  }
+  window.addEventListener("dragenter", (e) => {
+    if (!dragCarriesLink(e)) return;
+    e.preventDefault();
+    dragDepth++;
+    dropOverlay.hidden = false;
+  });
+  window.addEventListener("dragover", (e) => {
+    if (!dragCarriesLink(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  });
+  window.addEventListener("dragleave", (e) => {
+    if (!dragCarriesLink(e)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) dropOverlay.hidden = true;
+  });
+  window.addEventListener("dragend", hideDropOverlay);
+  window.addEventListener("drop", (e) => {
+    const target = e.target as HTMLElement | null;
+    // رها کردن روی فیلدهای ورودی، چسباندنِ بومیِ مرورگر است — دست نمی‌زنیم.
+    if (target?.closest("input, textarea, select, [contenteditable]")) {
+      hideDropOverlay();
+      return;
+    }
+    if (!dragCarriesLink(e)) {
+      hideDropOverlay();
+      return;
+    }
+    e.preventDefault();
+    hideDropOverlay();
+    const dt = e.dataTransfer;
+    if (!dt || dt.files.length > 0) return; // فقط لینک؛ دراپِ فایل نادیده گرفته می‌شود
+    const lines = [
+      ...dt.getData("text/uri-list").split(/\r?\n/),
+      ...dt.getData("text/plain").split(/\r?\n/),
+    ]
+      .map((s) => s.trim())
+      .filter((s) => s !== "" && !s.startsWith("#"));
+    const urls = [...new Set(lines.filter(looksLikeUrl))];
+    if (urls.length === 0) {
+      if (lines.length > 0) toast("این لینک معتبر به نظر نمی‌رسد.", true);
+      return;
+    }
+    void (async () => {
+      for (const url of urls) await addFromInput(url);
+    })();
+  });
+
   /* ── تنظیمات ── */
   const settingsMsg = $<HTMLElement>("#settingsMsg");
   // آخرین تنظیمات خوانده‌شده از بک‌اند؛ فیلدهایی که فرم ندارد (مثل max_parallel)
