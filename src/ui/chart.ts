@@ -54,7 +54,10 @@ export class SpeedChart {
 
     const now = Date.now();
     const t0 = now - this.windowMs;
-    const max = Math.max(...this.samples.map((s) => s.v), 1024); // حداقل مقیاس ۱KB/s
+    // سقف با ۲۵٪ فضای آزاد + گرد کردن به پله‌ی خوش‌خوان، تا سرعتِ ثابت
+    // سقفِ نمودار نچسبد و مقیاس هر ثانیه با تغییرِ جزئیِ نمونه‌ها نپرد.
+    const rawMax = Math.max(...this.samples.map((s) => s.v), 1024) * 1.25;
+    const max = niceCeiling(rawMax);
     const pad = H * 0.12;
     const x = (t: number) => ((t - t0) / this.windowMs) * W;
     const y = (v: number) => H - pad - (v / max) * (H - pad * 2);
@@ -94,4 +97,13 @@ export class SpeedChart {
     ctx.fillStyle = "#a5f3fc";
     ctx.fill();
   }
+}
+
+/** سقفِ خوش‌خوان: گرد کردن به بالا به نزدیک‌ترین پله‌ی ۱/۲/۵×۱۰^n */
+function niceCeiling(v: number): number {
+  if (v <= 0) return 1024;
+  const base = 10 ** Math.floor(Math.log10(v));
+  const m = v / base;
+  const step = m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10;
+  return step * base;
 }

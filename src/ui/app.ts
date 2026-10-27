@@ -77,6 +77,7 @@ interface RowRefs {
   toggleBtn: HTMLButtonElement;
   openBtn: HTMLButtonElement;
   shareBtn: HTMLButtonElement;
+  selectBox: HTMLInputElement;
 }
 
 export function mountApp(root: HTMLElement): void {
@@ -123,7 +124,20 @@ export function mountApp(root: HTMLElement): void {
     <nav class="dl-nav">
       <button id="tabActive" class="btn dl-tab active" type="button">در حال دانلود <span id="countActive" class="dl-count">۰</span></button>
       <button id="tabDone" class="btn dl-tab" type="button">دانلود شده‌ها <span id="countDone" class="dl-count">۰</span></button>
+      <span class="dl-nav-spacer"></span>
+      <button id="pauseAllBtn" class="btn" type="button">⏸ توقف همه</button>
+      <button id="resumeAllBtn" class="btn" type="button">▶ شروع همه</button>
     </nav>
+
+    <!-- نوار اقدام گروهی: فقط وقتی چیزی انتخاب شده دیده می‌شود -->
+    <div id="bulkBar" class="bulk-bar card" hidden>
+      <span id="bulkCount" class="bulk-count"></span>
+      <div class="bulk-actions">
+        <button id="bulkPauseBtn" class="btn small" type="button">⏸ توقف انتخاب‌شده‌ها</button>
+        <button id="bulkResumeBtn" class="btn small" type="button">▶ شروع انتخاب‌شده‌ها</button>
+        <button id="bulkRemoveBtn" class="btn small danger" type="button">حذف انتخاب‌شده‌ها</button>
+      </div>
+    </div>
 
     <main id="listActive" class="list"></main>
     <main id="listDone" class="list" hidden></main>
@@ -283,10 +297,48 @@ export function mountApp(root: HTMLElement): void {
   // اشتراک‌گذاری برای دانلودهای کامل‌شده نشان داده می‌شوند.
   let isAndroid = false;
 
+  /* ── نوشتنِ محافظه‌کارانه در DOM: مقدارِ تکراری هرگز بازنویسی نمی‌شود ──
+     (بازبینیِ هر ثانیه‌ی همه‌ی فیلدها وسطِ فشارِ موس در WebView2 ویندوز
+     کلیک را می‌خورد — باگ دکمه‌های ۰٫۶٫۶) */
+  function setText(el: HTMLElement, value: string): void {
+    if (el.textContent !== value) el.textContent = value;
+  }
+  function setDisabled(btn: HTMLButtonElement, value: boolean): void {
+    if (btn.disabled !== value) btn.disabled = value;
+  }
+
+  /* ── انتخابِ گروهی ردیف‌ها ── */
+  const selected = new Set<string>();
+  const bulkBar = $<HTMLElement>("#bulkBar");
+  const bulkCount = $<HTMLElement>("#bulkCount");
+  const bulkPauseBtn = $<HTMLButtonElement>("#bulkPauseBtn");
+  const bulkResumeBtn = $<HTMLButtonElement>("#bulkResumeBtn");
+  const bulkRemoveBtn = $<HTMLButtonElement>("#bulkRemoveBtn");
+  const pauseAllBtn = $<HTMLButtonElement>("#pauseAllBtn");
+  const resumeAllBtn = $<HTMLButtonElement>("#resumeAllBtn");
+
+  function syncBulkBar(): void {
+    bulkBar.hidden = selected.size === 0;
+    setText(bulkCount, selected.size === 0 ? "" : `${faNum(selected.size)} دانلود انتخاب شده`);
+    const selItems = items.filter((i) => selected.has(i.id));
+    setDisabled(
+      bulkPauseBtn,
+      !selItems.some((i) => i.status === "downloading" || i.status === "queued"),
+    );
+    setDisabled(bulkResumeBtn, !selItems.some((i) => i.status === "paused"));
+    setDisabled(bulkRemoveBtn, selItems.length === 0);
+    setDisabled(
+      pauseAllBtn,
+      !items.some((i) => i.status === "downloading" || i.status === "queued"),
+    );
+    setDisabled(resumeAllBtn, !items.some((i) => i.status === "paused"));
+  }
+
   function buildRow(it: DownloadItem): RowRefs {
     const el = document.createElement("article");
     el.className = "dl card";
     el.innerHTML = `
+      <label class="dl-select"><input class="dl-check" type="checkbox" aria-label="انتخاب دانلود" /></label>
       <div class="dl-ic">${fileIcon(it.file_name)}</div>
       <div class="dl-main">
         <div class="dl-top">
@@ -320,7 +372,13 @@ export function mountApp(root: HTMLElement): void {
       toggleBtn: el.querySelector(".toggle")!,
       openBtn: el.querySelector(".open-file")!,
       shareBtn: el.querySelector(".share-file")!,
+      selectBox: el.querySelector(".dl-check")!,
     };
+    refs.selectBox.addEventListener("change", () => {
+      if (refs.selectBox.checked) selected.add(it.id);
+      else selected.delete(it.id);
+      syncBulkBar();
+    });
     refs.toggleBtn.addEventListener("click", () => void onToggle(it.id));
     el.querySelector(".copy-link")!.addEventListener("click", () => void onCopyLink(it.id));
     refs.openBtn.addEventListener("click", () => void onOpen(it.id));
@@ -332,29 +390,46 @@ export function mountApp(root: HTMLElement): void {
 
   function updateRow(refs: RowRefs, it: DownloadItem): void {
     const pct = progressPct(it);
-    refs.name.textContent = it.file_name || "فایل بدون نام";
-    refs.name.title = it.url;
-    refs.size.textContent =
+    setText(refs.name, it.file_name || "فایل بدون نام");
+    if (refs.name.title !== it.url) refs.name.title = it.url;
+    setText(
+      refs.size,
       it.size !== null
         ? `${fmtBytes(it.downloaded)} از ${fmtBytes(it.size)}`
-        : `${fmtBytes(it.downloaded)} دانلود شده — حجم کل نامشخص`;
-    refs.barFill.style.width = pct !== null ? `${pct}%` : it.status === "completed" ? "100%" : "0%";
-    refs.el.dataset.status = it.status;
-    refs.pct.textContent = pct !== null ? `— ${fmtPct(pct)}` : it.status === "completed" ? "— ۱۰۰٪" : "—";
-    refs.speed.textContent = it.status === "downloading" ? fmtSpeed(it.speed) : "";
+        : `${fmtBytes(it.downloaded)} دانلود شده — حجم کل نامشخص`,
+    );
+    const width = pct !== null ? `${pct}%` : it.status === "completed" ? "100%" : "0%";
+    if (refs.barFill.style.width !== width) refs.barFill.style.width = width;
+    if (refs.el.dataset.status !== it.status) refs.el.dataset.status = it.status;
+    setText(
+      refs.pct,
+      pct !== null ? `— ${fmtPct(pct)}` : it.status === "completed" ? "— ۱۰۰٪" : "—",
+    );
+    setText(refs.speed, it.status === "downloading" ? fmtSpeed(it.speed) : "");
     const eta = etaSeconds(it);
-    refs.eta.textContent = eta !== null ? `حدود ${fmtEta(eta)} مانده` : "";
-    refs.status.textContent =
-      it.status === "error" && it.error ? `خطا: ${stripUrlFromError(it.error)}` : STATUS_LABEL[it.status];
-    refs.status.title = it.status === "error" && it.error ? `خطا: ${it.error}` : "";
-    refs.toggleBtn.textContent =
-      it.status === "downloading" || it.status === "queued" ? "⏸ مکث" : "▶ ادامه";
-    refs.toggleBtn.disabled = it.status === "completed" || it.status === "error";
+    setText(refs.eta, eta !== null ? `حدود ${fmtEta(eta)} مانده` : "");
+    setText(
+      refs.status,
+      it.status === "error" && it.error ? `خطا: ${stripUrlFromError(it.error)}` : STATUS_LABEL[it.status],
+    );
+    const statusTitle = it.status === "error" && it.error ? `خطا: ${it.error}` : "";
+    if (refs.status.title !== statusTitle) refs.status.title = statusTitle;
+    // دکمه‌ی زیرِ فشارِ موس همین تیک بازنویسی نمی‌شود تا کلیک خورده نشود.
+    if (!refs.toggleBtn.matches(":active")) {
+      setText(
+        refs.toggleBtn,
+        it.status === "downloading" || it.status === "queued" ? "⏸ مکث" : "▶ ادامه",
+      );
+      setDisabled(refs.toggleBtn, it.status === "completed" || it.status === "error");
+    }
     // باز کردن/اشتراک‌گذاری فقط روی اندروید و فقط برای فایل کامل‌شده
     // (روی دسکتاپ فایل از قبل در پوشه‌ی کاربر دیده می‌شود).
     const showFileActions = isAndroid && it.status === "completed";
-    refs.openBtn.hidden = !showFileActions;
-    refs.shareBtn.hidden = !showFileActions;
+    if (refs.openBtn.hidden !== !showFileActions) refs.openBtn.hidden = !showFileActions;
+    if (refs.shareBtn.hidden !== !showFileActions) refs.shareBtn.hidden = !showFileActions;
+    // همگام‌سازی چک‌باکس انتخاب؛ مقدارِ تکراری بازنویسی نمی‌شود.
+    const wantChecked = selected.has(it.id);
+    if (refs.selectBox.checked !== wantChecked) refs.selectBox.checked = wantChecked;
   }
 
   // جای خالی هر صفحه (یک بار ساخته می‌شود؛ با innerHTML پاک نمی‌شود
@@ -371,9 +446,17 @@ export function mountApp(root: HTMLElement): void {
     <p class="muted">دانلودهای کامل‌شده اینجا می‌آیند.</p>`;
 
   function render(): void {
+    // کارت‌های «خالی» اول کنار می‌روند تا جای ردیف‌ها در محاسبه‌ی
+    // ترتیب دقیق باشد؛ در پایان در صورت نیاز دوباره اضافه می‌شوند.
+    emptyActive.remove();
+    emptyDone.remove();
     const seen = new Set<string>();
     let nActive = 0;
     let nDone = 0;
+    // آخرین ردیفِ گذاشته‌شده در هر صفحه؛ ردیف فقط وقتی جابه‌جا می‌شود
+    // که والد یا ترتیبِ قرارگیری‌اش واقعاً عوض شده باشد.
+    let prevActive: Element | null = null;
+    let prevDone: Element | null = null;
     for (const it of items) {
       seen.add(it.id);
       let refs = rows.get(it.id);
@@ -381,32 +464,45 @@ export function mountApp(root: HTMLElement): void {
         refs = buildRow(it);
         rows.set(it.id, refs);
       }
-      // ردیف با appendChild بین دو صفحه جابه‌جا می‌شود؛ ref کلیددار سالم می‌ماند.
-      (it.status === "completed" ? listDone : listActive).appendChild(refs.el);
+      const list = it.status === "completed" ? listDone : listActive;
+      const prev = it.status === "completed" ? prevDone : prevActive;
+      const el = refs.el;
+      const needsMove =
+        el.parentElement !== list ||
+        (prev === null ? el.previousElementSibling !== null : el.previousElementSibling !== prev);
+      if (needsMove) {
+        if (prev === null) list.prepend(el);
+        else prev.after(el);
+      }
+      if (it.status === "completed") {
+        prevDone = el;
+        nDone++;
+      } else {
+        prevActive = el;
+        nActive++;
+      }
       updateRow(refs, it);
-      if (it.status === "completed") nDone++;
-      else nActive++;
     }
     for (const [id, refs] of rows) {
       if (!seen.has(id)) {
+        selected.delete(id);
         refs.el.remove();
         rows.delete(id);
       }
     }
     if (nActive === 0) listActive.appendChild(emptyActive);
-    else emptyActive.remove();
     if (nDone === 0) listDone.appendChild(emptyDone);
-    else emptyDone.remove();
-    countActive.textContent = faInt(nActive);
-    countDone.textContent = faInt(nDone);
+    setText(countActive, faInt(nActive));
+    setText(countDone, faInt(nDone));
 
     const totalSpeed = items.reduce((s, i) => s + (i.status === "downloading" ? i.speed : 0), 0);
-    totalSpeedEl.textContent = fmtSpeed(totalSpeed);
-    chartNowEl.textContent = fmtSpeed(totalSpeed);
+    setText(totalSpeedEl, fmtSpeed(totalSpeed));
+    setText(chartNowEl, fmtSpeed(totalSpeed));
     chart.push(totalSpeed);
-    $("#statActive").textContent = faInt(items.filter((i) => i.status === "downloading").length);
-    $("#statDone").textContent = fmtBytes(items.reduce((s, i) => s + i.downloaded, 0));
-    $("#statCount").textContent = faInt(items.length);
+    setText($("#statActive"), faInt(items.filter((i) => i.status === "downloading").length));
+    setText($("#statDone"), fmtBytes(items.reduce((s, i) => s + i.downloaded, 0)));
+    setText($("#statCount"), faInt(items.length));
+    syncBulkBar();
   }
 
   function applySnapshot(next: DownloadItem[]): void {
@@ -497,6 +593,94 @@ export function mountApp(root: HTMLElement): void {
     }
   }
 
+  /* ── اقدام‌های گروهی: همان فرمان‌های تکی، پشتِ سرِ هم ── */
+  async function bulkPause(ids: string[]): Promise<void> {
+    let done = 0;
+    let firstError: unknown = null;
+    for (const id of ids) {
+      try {
+        await api.pauseDownload(id);
+        done++;
+      } catch (e) {
+        if (firstError === null) firstError = e;
+      }
+    }
+    if (done > 0) toast(`توقف ${faNum(done)} دانلود انجام شد.`);
+    if (firstError !== null)
+      toast("خطا در توقف: " + String((firstError as Error)?.message || firstError), true);
+    void refresh();
+  }
+
+  async function bulkResume(ids: string[]): Promise<void> {
+    let done = 0;
+    let firstError: unknown = null;
+    for (const id of ids) {
+      try {
+        await api.resumeDownload(id);
+        done++;
+      } catch (e) {
+        if (firstError === null) firstError = e;
+      }
+    }
+    if (done > 0) toast(`شروع ${faNum(done)} دانلود انجام شد.`);
+    if (firstError !== null)
+      toast("خطا در شروع: " + String((firstError as Error)?.message || firstError), true);
+    void refresh();
+  }
+
+  async function bulkRemove(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    if (
+      !window.confirm(
+        `${faNum(ids.length)} دانلود انتخاب‌شده از لیست حذف شود؟ (فایل‌های دانلودشده روی دیسک می‌مانند)`,
+      )
+    )
+      return;
+    let done = 0;
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await api.removeDownload(id, false);
+        selected.delete(id);
+        done++;
+      } catch {
+        failed++;
+      }
+    }
+    if (done > 0) toast(`حذف ${faNum(done)} دانلود انجام شد.`);
+    if (failed > 0) toast(`حذف ${faNum(failed)} دانلود ناموفق بود.`, true);
+    syncBulkBar();
+    void refresh();
+  }
+
+  pauseAllBtn.addEventListener("click", () => {
+    const ids = items
+      .filter((i) => i.status === "downloading" || i.status === "queued")
+      .map((i) => i.id);
+    if (ids.length > 0) void bulkPause(ids);
+  });
+  resumeAllBtn.addEventListener("click", () => {
+    const ids = items.filter((i) => i.status === "paused").map((i) => i.id);
+    if (ids.length > 0) void bulkResume(ids);
+  });
+  bulkPauseBtn.addEventListener("click", () => {
+    const ids = items
+      .filter((i) => selected.has(i.id) && (i.status === "downloading" || i.status === "queued"))
+      .map((i) => i.id);
+    if (ids.length > 0) void bulkPause(ids);
+    else toast("موردی برای توقف انتخاب نشده است.");
+  });
+  bulkResumeBtn.addEventListener("click", () => {
+    const ids = items
+      .filter((i) => selected.has(i.id) && i.status === "paused")
+      .map((i) => i.id);
+    if (ids.length > 0) void bulkResume(ids);
+    else toast("موردی برای شروع انتخاب نشده است.");
+  });
+  bulkRemoveBtn.addEventListener("click", () => {
+    void bulkRemove(items.filter((i) => selected.has(i.id)).map((i) => i.id));
+  });
+
   async function addFromInput(raw: string): Promise<void> {
     const url = raw.trim();
     if (!url) {
@@ -542,6 +726,71 @@ export function mountApp(root: HTMLElement): void {
     urlInput.value = text.trim();
     if (looksLikeUrl(text)) void addFromInput(text);
     else toast("متن کلیپ‌بورد لینک دانلود نیست؛ در کادر قرار گرفت.");
+  });
+
+  /* ── درگ‌دراپ لینک: رها کردن لینک روی هرجای پنجره = افزودن دانلود ── */
+  const dropOverlay = document.createElement("div");
+  dropOverlay.className = "drop-overlay";
+  dropOverlay.innerHTML = `<div class="drop-overlay-card"><div class="drop-overlay-ic">⬇</div><p>لینک را رها کنید تا دانلود شود</p></div>`;
+  dropOverlay.hidden = true;
+  root.appendChild(dropOverlay);
+
+  // شمارنده‌ی ورود/خروج: dragleave موقع رد شدن از روی بچه‌ها هم می‌آید.
+  let dragDepth = 0;
+  function dragCarriesLink(e: DragEvent): boolean {
+    const types: readonly string[] = e.dataTransfer?.types ?? [];
+    return types.includes("text/uri-list") || types.includes("text/plain");
+  }
+  function hideDropOverlay(): void {
+    dragDepth = 0;
+    dropOverlay.hidden = true;
+  }
+  window.addEventListener("dragenter", (e) => {
+    if (!dragCarriesLink(e)) return;
+    e.preventDefault();
+    dragDepth++;
+    dropOverlay.hidden = false;
+  });
+  window.addEventListener("dragover", (e) => {
+    if (!dragCarriesLink(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  });
+  window.addEventListener("dragleave", (e) => {
+    if (!dragCarriesLink(e)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) dropOverlay.hidden = true;
+  });
+  window.addEventListener("dragend", hideDropOverlay);
+  window.addEventListener("drop", (e) => {
+    const target = e.target as HTMLElement | null;
+    // رها کردن روی فیلدهای ورودی، چسباندنِ بومیِ مرورگر است — دست نمی‌زنیم.
+    if (target?.closest("input, textarea, select, [contenteditable]")) {
+      hideDropOverlay();
+      return;
+    }
+    if (!dragCarriesLink(e)) {
+      hideDropOverlay();
+      return;
+    }
+    e.preventDefault();
+    hideDropOverlay();
+    const dt = e.dataTransfer;
+    if (!dt || dt.files.length > 0) return; // فقط لینک؛ دراپِ فایل نادیده گرفته می‌شود
+    const lines = [
+      ...dt.getData("text/uri-list").split(/\r?\n/),
+      ...dt.getData("text/plain").split(/\r?\n/),
+    ]
+      .map((s) => s.trim())
+      .filter((s) => s !== "" && !s.startsWith("#"));
+    const urls = [...new Set(lines.filter(looksLikeUrl))];
+    if (urls.length === 0) {
+      if (lines.length > 0) toast("این لینک معتبر به نظر نمی‌رسد.", true);
+      return;
+    }
+    void (async () => {
+      for (const url of urls) await addFromInput(url);
+    })();
   });
 
   /* ── تنظیمات ── */
