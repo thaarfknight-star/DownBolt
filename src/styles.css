@@ -162,7 +162,18 @@ body {
 /* ── صفحه‌ی تنظیمات (۰٫۶٫۳: نمای جدا) ─── */
 .app.settings-open .addbar, .app.settings-open .stats,
 .app.settings-open .chart-card, .app.settings-open .dl-nav,
-.app.settings-open .list { display: none; }
+.app.settings-open .bulk-bar, .app.settings-open .list { display: none; }
+
+/* ── نوار اقدام گروهی و انتخاب ردیف‌ها ── */
+.dl-nav-spacer { flex: 1; }
+.dl-select { flex: 0 0 auto; display: flex; align-items: center; padding-top: 2px; }
+.dl-check { width: 18px; height: 18px; accent-color: var(--neon); cursor: pointer; margin: 0; }
+.bulk-bar:not([hidden]) {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 10px 14px; margin-bottom: 14px; flex-wrap: wrap;
+}
+.bulk-count { color: var(--muted); font-size: 13.5px; font-weight: 700; }
+.bulk-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* ── ناوبری دو صفحه‌ی دانلود (۰٫۶٫۴) ── */
 .dl-nav { display: flex; gap: 10px; margin-bottom: 14px; }
