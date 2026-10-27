@@ -131,9 +131,9 @@ body {
 .dl[data-status="error"] .dl-ic { color: var(--danger); background: rgba(251, 113, 133, 0.08); border-color: rgba(251, 113, 133, 0.3); }
 .dl[data-status="paused"] .dl-ic { color: var(--warn); background: rgba(251, 191, 36, 0.07); border-color: rgba(251, 191, 36, 0.3); }
 .dl-main { flex: 1; min-width: 0; }
-.dl-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.dl-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
 .dl-name { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: ltr; text-align: right; unicode-bidi: plaintext; }
-.dl-status { font-size: 12px; padding: 2px 10px; border-radius: 999px; white-space: nowrap; background: #16223a; color: var(--muted); border: 1px solid var(--line); }
+.dl-status { font-size: 12px; padding: 2px 10px; border-radius: 999px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; min-width: 0; background: #16223a; color: var(--muted); border: 1px solid var(--line); }
 .dl[data-status="downloading"] .dl-status { color: #a5f3fc; border-color: rgba(34, 211, 238, 0.4); }
 .dl[data-status="completed"] .dl-status { color: #a7f3d0; border-color: rgba(52, 211, 153, 0.4); }
 .dl[data-status="error"] .dl-status { color: #fecdd3; border-color: rgba(251, 113, 133, 0.45); }
