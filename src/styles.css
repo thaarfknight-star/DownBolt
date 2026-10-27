@@ -224,6 +224,20 @@ body {
 }
 .toast.error { border-color: var(--danger); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 16px rgba(251, 113, 133, 0.3); }
 
+/* ── لایه‌ی راهنمای درگ‌دراپ لینک ── */
+.drop-overlay:not([hidden]) {
+  position: fixed; inset: 0; z-index: 60; display: flex;
+  align-items: center; justify-content: center; pointer-events: none;
+  background: rgba(4, 12, 24, 0.55);
+}
+.drop-overlay-card {
+  border: 2px dashed var(--neon); border-radius: 18px; padding: 32px 44px;
+  background: rgba(10, 17, 32, 0.92); text-align: center; color: #cffafe;
+  box-shadow: 0 0 32px rgba(34, 211, 238, 0.35); font-size: 17px; font-weight: 700;
+}
+.drop-overlay-card p { margin: 0; }
+.drop-overlay-ic { font-size: 34px; margin-bottom: 8px; }
+
 @media (max-width: 640px) {
   .stats { grid-template-columns: 1fr; }
   .addbar { flex-direction: column; }
