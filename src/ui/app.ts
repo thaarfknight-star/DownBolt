@@ -33,6 +33,13 @@ function looksLikeUrl(s: string): boolean {
   return /^(https?|ftp):\/\/\S+$/i.test(s.trim()) || /^magnet:\?/i.test(s.trim());
 }
 
+/** لینکِ داخلِ رشته‌ی خطا برای نمایش بریده می‌شود؛ متنِ کامل فقط در title می‌ماند. */
+function stripUrlFromError(err: string): string {
+  const cut = err.search(/https?:\/\//);
+  const head = (cut === -1 ? err : err.slice(0, cut)).replace(/[\s(:،,;\-]+$/, "").trim();
+  return head === "" ? "خطای شبکه" : head;
+}
+
 /** آیکن فایل بر اساس پسوند (SVG ساده و سبک) */
 function fileIcon(name: string): string {
   const ext = (name.split(".").pop() || "").toLowerCase();
@@ -338,7 +345,8 @@ export function mountApp(root: HTMLElement): void {
     const eta = etaSeconds(it);
     refs.eta.textContent = eta !== null ? `حدود ${fmtEta(eta)} مانده` : "";
     refs.status.textContent =
-      it.status === "error" && it.error ? `خطا: ${it.error}` : STATUS_LABEL[it.status];
+      it.status === "error" && it.error ? `خطا: ${stripUrlFromError(it.error)}` : STATUS_LABEL[it.status];
+    refs.status.title = it.status === "error" && it.error ? `خطا: ${it.error}` : "";
     refs.toggleBtn.textContent =
       it.status === "downloading" || it.status === "queued" ? "⏸ مکث" : "▶ ادامه";
     refs.toggleBtn.disabled = it.status === "completed" || it.status === "error";
