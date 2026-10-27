@@ -527,7 +527,7 @@ pub fn run() {
                     };
                     let action = serde_json::from_str::<serde_json::Value>(&raw)
                         .ok()
-                        .and_then(|v| v.get("action")?.as_str()?.to_string());
+                        .and_then(|v| Some(v.get("action")?.as_str()?.to_string()));
                     let _ = std::fs::remove_file(&mailbox);
                     let Some(action) = action else { continue };
                     match action.as_str() {
