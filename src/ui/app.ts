@@ -163,6 +163,10 @@ export function mountApp(root: HTMLElement): void {
         <p id="androidDirNote" class="muted" hidden>روی اندروید، فایل‌های کامل‌شده در پوشه‌ی Downloads عمومی ذخیره می‌شوند و «حذف فایل» نسخه‌ی عمومی را هم پاک می‌کند؛ انتخاب پوشه روی موبایل ممکن نیست.</p>
         <div class="field-grid">
           <label class="field">
+            <span>تعداد دانلود همزمان (۱ تا ۱۶)</span>
+            <input id="setMaxParallel" type="number" min="1" max="16" step="1" />
+          </label>
+          <label class="field">
             <span>سقف اتصال موازی هر دانلود (۱ تا ۱۶)</span>
             <input id="setParallel" type="number" min="1" max="16" step="1" />
           </label>
@@ -171,6 +175,7 @@ export function mountApp(root: HTMLElement): void {
             <input id="setSpeed" type="number" min="0" step="64" />
           </label>
         </div>
+        <p class="muted">بالا بردنِ تعداد دانلود همزمان، دانلودهای در صف را فوراً شروع می‌کند؛ پایین آوردنش روی دانلودهای در حال اجرا اثر نمی‌گذارد.</p>
       </section>
 
       <section id="postDownloadSection" class="card settings-section">
@@ -795,17 +800,14 @@ export function mountApp(root: HTMLElement): void {
 
   /* ── تنظیمات ── */
   const settingsMsg = $<HTMLElement>("#settingsMsg");
-  // آخرین تنظیمات خوانده‌شده از بک‌اند؛ فیلدهایی که فرم ندارد (مثل max_parallel)
-  // موقع ذخیره از همین‌جا حفظ می‌شوند تا قرارداد DmSettings نشکند.
-  let lastSettings: DmSettings | null = null;
   $("#settingsBtn").addEventListener("click", async () => {
     const opening = settingsPage.hidden;
     showSettingsPage(opening);
     if (opening) {
       try {
         const s = await api.getSettings();
-        lastSettings = s;
         $<HTMLInputElement>("#setDir").value = s.download_dir;
+        $<HTMLInputElement>("#setMaxParallel").value = String(s.max_parallel);
         $<HTMLInputElement>("#setParallel").value = String(s.max_connections);
         $<HTMLInputElement>("#setSpeed").value = String(s.speed_limit_kbps);
         $<HTMLSelectElement>("#setPostAction").value = s.post_download_action || "none";
@@ -838,7 +840,7 @@ export function mountApp(root: HTMLElement): void {
   $("#saveSettingsBtn").addEventListener("click", async () => {
     const settings: DmSettings = {
       download_dir: $<HTMLInputElement>("#setDir").value.trim(),
-      max_parallel: lastSettings?.max_parallel ?? 3,
+      max_parallel: Math.min(16, Math.max(1, Number($<HTMLInputElement>("#setMaxParallel").value) || 3)),
       max_connections: Math.min(16, Math.max(1, Number($<HTMLInputElement>("#setParallel").value) || 8)),
       speed_limit_kbps: Math.max(0, Number($<HTMLInputElement>("#setSpeed").value) || 0),
       post_download_action: $<HTMLSelectElement>("#setPostAction")
