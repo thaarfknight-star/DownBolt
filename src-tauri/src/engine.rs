@@ -167,6 +167,10 @@ impl TokenBucket {
 struct RunControl {
     stop: AtomicBool,
     fatal: Mutex<Option<String>>,
+    /// نسل کاملاً مرده است (نخش تمام شده): نسل تازه‌ی همان تسک، قبل
+    /// از لمس فایل/سایدکار، این را صبر می‌کند. هم نخِ خودِ نسل آن را
+    /// ست می‌کند، هم نخِ جداکننده بعد از join (مسیر panic).
+    dead: AtomicBool,
     /// هندل نخ ناظر؛ start بعدی همان تسک اول این را stop و join می‌کند تا دو
     /// نسل هرگز هم‌زمان روی یک فایل/سایدکار ننویسند.
     handle: Mutex<Option<std::thread::JoinHandle<()>>>,
@@ -217,9 +221,20 @@ fn jitter_ms(base: u64) -> u64 {
     base + (nanos % 250)
 }
 
-fn backoff(attempt: u32) {
+/// وقفه‌ی بین تلاش‌ها که توقف را می‌بیند: خواب به برش‌های ۵۰ms
+/// تقسیم می‌شود تا مکث/لغو، پشتِ خوابِ چندثانیه‌ای گیر نکند —
+/// همان گیرکردنی که با join زیر قفلِ مدیر، پنجره را «Not Responding»
+/// می‌کرد.
+fn backoff(attempt: u32, ctl: &Arc<RunControl>) {
     let base = 400u64 << attempt.min(4);
-    std::thread::sleep(Duration::from_millis(jitter_ms(base)));
+    let total = Duration::from_millis(jitter_ms(base));
+    let start = Instant::now();
+    while start.elapsed() < total {
+        if ctl.stop.load(Ordering::SeqCst) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn build_agent() -> ureq::Agent {
@@ -305,16 +320,32 @@ impl Default for RealEngine {
 
 impl DownloadEngine for RealEngine {
     fn start(&self, task: EngineTask, events: Sender<EngineEvent>) -> Result<(), String> {
-        // نسل قبلی همین تسک باید کاملاً مرده باشد قبل از شروع نسل تازه؛
-        // وگرنه دو نسل روی یک فایل و یک سایدکار می‌نویسند (خرابی خاموش).
-        if let Some(old) = self.runs.lock().unwrap().remove(&task.id) {
+        // نسل قبلی همین تسک فقط stop می‌شود؛ join آن در نخِ جداکننده
+        // انجام می‌شود تا start زیر قفلِ مدیر، روی نخِ گیرکرده‌ی نسل
+        // قبل قفل نکند (علتِ «Not Responding»). نسل تازه قبل از لمس
+        // فایل/سایدکار، مردنِ نسل قبلی را در run_task صبر می‌کند، پس
+        // دو نسل هرگز هم‌زمان روی یک فایل نمی‌نویسند (خرابی خاموش).
+        let predecessor = self.runs.lock().unwrap().remove(&task.id);
+        let predecessor = if let Some(old) = predecessor {
             old.stop();
-            old.join();
-        }
+            let reaper = old.clone();
+            std::thread::Builder::new()
+                .name("downbolt-reaper".to_string())
+                .spawn(move || {
+                    reaper.join();
+                    // مسیر panic نخِ نسل قبل: join برگشت ولی dead ست نشد.
+                    reaper.dead.store(true, Ordering::SeqCst);
+                })
+                .map_err(|e| format!("ساخت نخ جداکننده ناموفق بود: {e}"))?;
+            Some(old)
+        } else {
+            None
+        };
         let id = task.id.clone();
         let ctl = Arc::new(RunControl {
             stop: AtomicBool::new(false),
             fatal: Mutex::new(None),
+            dead: AtomicBool::new(false),
             handle: Mutex::new(None),
         });
         self.runs.lock().unwrap().insert(id.clone(), ctl.clone());
@@ -326,7 +357,8 @@ impl DownloadEngine for RealEngine {
         let handle = std::thread::Builder::new()
             .name(format!("downbolt-{id}"))
             .spawn(move || {
-                run_task(task, events, ctl2.clone(), bucket);
+                run_task(task, events, ctl2.clone(), bucket, predecessor);
+                ctl2.dead.store(true, Ordering::SeqCst);
                 // پاک‌سازی نقشه: فقط اگر هنوز همین نسل سر جایش است.
                 let mut map = runs.lock().unwrap();
                 if map.get(&id).map(|c| Arc::ptr_eq(c, &ctl2)).unwrap_or(false) {
@@ -361,7 +393,24 @@ impl DownloadEngine for RealEngine {
 }
 
 /// بدنه‌ی یک دانلود: پروب، انتخاب حالت (چندبخشی/تکی)، اجرا و گزارش پایانی.
-fn run_task(task: EngineTask, events: Sender<EngineEvent>, ctl: Arc<RunControl>, bucket: Arc<TokenBucket>) {
+fn run_task(
+    task: EngineTask,
+    events: Sender<EngineEvent>,
+    ctl: Arc<RunControl>,
+    bucket: Arc<TokenBucket>,
+    predecessor: Option<Arc<RunControl>>,
+) {
+    // نسل قبلی باید کاملاً مرده باشد قبل از اینکه این نسل فایل یا
+    // سایدکار را لمس کند. صبر روی نخِ خودِ دانلود است (با دیدنِ توقفِ
+    // خود)، نه زیر هیچ قفلی — پس پنجره در این فاصله زنده می‌ماند.
+    if let Some(prev) = &predecessor {
+        while !prev.dead.load(Ordering::SeqCst) {
+            if ctl.stop.load(Ordering::SeqCst) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
     let agent = build_agent();
     let result = run_task_inner(&task, &events, &ctl, &bucket, &agent);
     match result {
@@ -677,7 +726,7 @@ fn download_chunk(ctx: &WorkerCtx, idx: usize, file: &mut std::fs::File) -> Resu
                 if attempt > MAX_CHUNK_RETRIES {
                     return Err(ChunkError::RetryExhausted(e));
                 }
-                backoff(attempt);
+                backoff(attempt, ctx.ctl);
             }
         }
     }
@@ -781,7 +830,7 @@ fn stream_download(
                 if attempt > MAX_CHUNK_RETRIES + 2 {
                     return Err(e);
                 }
-                backoff(attempt);
+                backoff(attempt, ctl);
             }
         }
     }
@@ -1000,6 +1049,21 @@ mod engine_tests {
         let dir = std::env::temp_dir().join(format!("downbolt-eng-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("file.bin")
+    }
+
+    #[test]
+    fn backoff_returns_early_when_stopped() {
+        // وقفه‌ی بین تلاش‌ها نباید توقف را نبیند: با پرچمِ ست، همان
+        // اول برگردد، نه بعد از کلِ خوابِ چندثانیه‌ای.
+        let ctl = Arc::new(RunControl {
+            stop: AtomicBool::new(true),
+            fatal: Mutex::new(None),
+            dead: AtomicBool::new(false),
+            handle: Mutex::new(None),
+        });
+        let start = Instant::now();
+        backoff(4, &ctl);
+        assert!(start.elapsed() < Duration::from_millis(200));
     }
 
     #[test]

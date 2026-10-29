@@ -92,6 +92,12 @@ impl DownloadManager {
         self.persist()
     }
 
+    /// دسترسی به موتور برای لغوِ بدون قفل (lib.rs): لغو، نخِ نسل را
+    /// join می‌کند و نباید زیر قفلِ مدیر صدا زده شود.
+    pub fn engine(&self) -> Arc<dyn DownloadEngine> {
+        self.engine.clone()
+    }
+
     pub fn settings(&self) -> DmSettings {
         self.settings.clone()
     }
@@ -240,8 +246,14 @@ impl DownloadManager {
     /// فهرست می‌ماند (و اگر در حال دانلود بود مکث می‌شود) تا کاربر دوباره
     /// تلاش کند و حذف نصفه‌کاره بی‌صدا رد نشود.
     pub fn remove(&mut self, id: &str, delete_file: bool) -> Result<(), String> {
-        let idx = self.index_of(id)?;
         let _ = self.engine.cancel(id);
+        self.remove_cancelled(id, delete_file)
+    }
+
+    /// حذفِ رکوردِ تسکی که لغوش کامل شده است (لغو قبلاً — بیرونِ
+    /// قفلِ مدیر — انجام شده تا joinِ نخ‌ها کامندهای دیگر را قفل نکند).
+    pub fn remove_cancelled(&mut self, id: &str, delete_file: bool) -> Result<(), String> {
+        let idx = self.index_of(id)?;
         if delete_file {
             let dest = PathBuf::from(&self.records[idx].dest_path);
             let mut targets = vec![dest.clone()];
@@ -558,6 +570,42 @@ mod tests {
         // ادامه‌ی اولی از همان آفست
         mgr.resume(&a.id).unwrap();
         assert_eq!(mgr.list()[0].status, DownloadStatus::Downloading);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn raising_parallel_cap_starts_queued() {
+        // بالا بردنِ سقفِ هم‌زمانی با set_settings، تسک‌های صف را
+        // همان لحظه شروع می‌کند (pump در set_settings).
+        let (mut mgr, dir, engine) = manager_with(1, false);
+        let _a = mgr.add("https://ex.com/a.zip").unwrap();
+        let b = mgr.add("https://ex.com/b.zip").unwrap();
+        assert_eq!(mgr.list()[1].status, DownloadStatus::Queued);
+        let mut s = mgr.settings();
+        s.max_parallel = 3;
+        mgr.set_settings(s).unwrap();
+        assert_eq!(mgr.list()[1].status, DownloadStatus::Downloading);
+        assert_eq!(engine.started.lock().unwrap().len(), 2);
+        let _ = b;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn lowering_parallel_cap_keeps_running() {
+        // پایین آوردنِ سقف، دانلودهای در حال اجرا را متوقف نمی‌کند؛
+        // فقط شروعِ تازه‌ها را تا سقفِ تازه محدود می‌کند.
+        let (mut mgr, dir, engine) = manager_with(3, false);
+        mgr.add("https://ex.com/a.zip").unwrap();
+        mgr.add("https://ex.com/b.zip").unwrap();
+        mgr.add("https://ex.com/c.zip").unwrap();
+        assert_eq!(engine.started.lock().unwrap().len(), 3);
+        let mut s = mgr.settings();
+        s.max_parallel = 1;
+        mgr.set_settings(s).unwrap();
+        assert!(mgr
+            .list()
+            .iter()
+            .all(|i| i.status == DownloadStatus::Downloading));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

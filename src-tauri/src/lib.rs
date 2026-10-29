@@ -321,8 +321,17 @@ fn remove_download(
                 .map_err(|e| format!("ورودی Downloads عمومی پاک نشد: {e}"))?;
         }
     }
+    // لغو (join نخ‌های نسل) بیرونِ قفلِ مدیر انجام می‌شود: اگر زیر
+    // قفل می‌ماند، همه‌ی کامندها — از جمله پولِ وضعیت و حلقه‌ی
+    // رویداد — پشتِ نخِ گیرکرده می‌ماندند و پنجره «Not Responding»
+    // می‌شد. رکورد تا پایانِ لغو در فهرست می‌ماند و بعد حذف می‌شود.
+    let engine = {
+        let mgr = state.manager.lock().unwrap();
+        mgr.engine()
+    };
+    let _ = engine.cancel(&id);
     let mut mgr = state.manager.lock().unwrap();
-    mgr.remove(&id, delete_file)?;
+    mgr.remove_cancelled(&id, delete_file)?;
     emit_snapshot(&app, &mgr);
     Ok(())
 }
