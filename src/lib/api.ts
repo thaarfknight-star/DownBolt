@@ -59,6 +59,15 @@ export interface DmSettings {
   speed_limit_kbps: number;
   /** حالت پس از دانلود؛ "none" یعنی هیچ‌کاری نکن */
   post_download_action: PostDownloadAction;
+  /** پوشه‌ی SAFِ اندروید (۰٫۶٫۱۰)؛ null یعنی Downloads عمومی */
+  android_folder_uri: string | null;
+  android_folder_name: string | null;
+}
+
+/** پوشه‌ی انتخاب‌شده با SAF (۰٫۶٫۱۰) */
+export interface SafFolder {
+  uri: string;
+  name: string;
 }
 
 /** پیش‌نمایش یک دانلود برای پنجره‌ی تأیید (۰٫۶٫۹) */
@@ -75,6 +84,9 @@ export interface PreviewInfo {
   total_bytes: number | null;
   /** مقصدی با همین مسیر قبلاً در فهرست است */
   already_listed: boolean;
+  /** پوشه‌ی SAFِ پیش‌فرضِ اندروید (۰٫۶٫۱۰)؛ روی دسکتاپ همیشه null */
+  android_folder_uri: string | null;
+  android_folder_name: string | null;
 }
 
 /** رویداد تیک شمارش معکوس پس از دانلود */
@@ -106,8 +118,12 @@ export const api = {
   addDownload: (url: string): Promise<DownloadItem> => invoke("add_download", { url }),
   previewDownload: (url: string, dir?: string | null): Promise<PreviewInfo> =>
     invoke("preview_download", { url, dir: dir ?? null }),
-  addDownloadTo: (url: string, dir?: string | null): Promise<DownloadItem> =>
-    invoke("add_download_to", { url, dir: dir ?? null }),
+  addDownloadTo: (
+    url: string,
+    dir?: string | null,
+    folderUri?: string | null,
+  ): Promise<DownloadItem> =>
+    invoke("add_download_to", { url, dir: dir ?? null, folder_uri: folderUri ?? null }),
   pauseDownload: (id: string): Promise<void> => invoke("pause_download", { id }),
   resumeDownload: (id: string): Promise<void> => invoke("resume_download", { id }),
   removeDownload: (id: string, deleteFile = false): Promise<void> =>
@@ -125,6 +141,14 @@ export const api = {
   getUpdateReport: (): Promise<UpdateReport> => invoke("get_update_report"),
   installApk: (path: string): Promise<void> =>
     invoke("plugin:downbolt-install|install_apk", { path }),
+  /** انتخاب پوشه با SAF (۰٫۶٫۱۰)؛ null یعنی کاربر لغو کرد */
+  pickSafFolder: async (): Promise<SafFolder | null> => {
+    const r = await invoke<{ uri: string; name: string }>(
+      "plugin:downbolt-install|pick_folder",
+    );
+    if (!r.uri) return null;
+    return r;
+  },
   setCloseToTray: (enabled: boolean): Promise<void> =>
     invoke("set_close_to_tray", { enabled }),
   getSettings: (): Promise<DmSettings> => invoke("get_settings"),
