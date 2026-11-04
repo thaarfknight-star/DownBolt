@@ -66,15 +66,14 @@ fn create_dropbox_window(app: &AppHandle) -> Result<(), String> {
     // گوشه‌ی بالا-راست مانیتور اصلی (مثل FDM)؛ اگر مانیتور خوانده نشد،
     // جای پیش‌فرض خود Tauri می‌ماند.
     if let Ok(Some(mon)) = app.primary_monitor() {
+        // position در Tauri 2 دو عدد منطقی (f64) می‌گیرد، نه PhysicalPosition؛
+        // پس عرض مانیتور را هم به منطقی برمی‌گردانیم.
         let scale = mon.scale_factor();
         let size = mon.size();
-        let w = (190.0 * scale) as u32;
-        let h = (215.0 * scale) as u32;
-        if size.width > w + 24 && size.height > h + 24 {
-            builder = builder.position(tauri::dpi::PhysicalPosition {
-                x: (size.width - w - 16) as i32,
-                y: 16,
-            });
+        let mon_w = size.width as f64 / scale;
+        let mon_h = size.height as f64 / scale;
+        if mon_w > 190.0 + 24.0 && mon_h > 215.0 + 24.0 {
+            builder = builder.position(mon_w - 190.0 - 16.0, 16.0);
         }
     }
     builder.build().map_err(|e| e.to_string())?;
