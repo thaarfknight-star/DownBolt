@@ -5,6 +5,7 @@
 //! اسنپ‌شات download-progress با throttle) و پلاگین‌های دیالوگ/کلیپ‌بورد.
 //! منطق واقعی در manager.rs (هسته) و engine.rs (نقطه‌ی اتصال موتور) است.
 
+mod disk;
 mod engine;
 mod manager;
 mod model;
@@ -17,6 +18,8 @@ use manager::{AppliedEffect, DownloadManager};
 use model::{DmSettings, DownloadItem, PostDownloadAction};
 #[cfg(target_os = "android")] // فقط refresh_foreground و هوک حلقه‌ی رویداد از آن استفاده می‌کنند
 use model::DownloadStatus;
+use serde::Serialize;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -225,6 +228,84 @@ fn add_download(
 ) -> Result<DownloadItem, String> {
     let mut mgr = state.manager.lock().unwrap();
     let item = mgr.add(&url)?;
+    emit_snapshot(&app, &mgr);
+    Ok(item)
+}
+
+/// پیش‌نمایش یک دانلود برای پنجره‌ی تأیید (۰٫۶٫۹): نام فایل از URL،
+/// حجم از پروبِ موتور (None یعنی سرور حجم را نگفت)، مسیرِ پیش‌فرض از
+/// تنظیمات، و فضای خالی/کلِ درایوِ همان مسیر.
+#[derive(Serialize)]
+pub struct PreviewInfo {
+    pub url: String,
+    pub file_name: String,
+    pub size: Option<u64>,
+    pub dir: String,
+    pub free_bytes: Option<u64>,
+    pub total_bytes: Option<u64>,
+    pub already_listed: bool,
+}
+
+#[tauri::command]
+fn preview_download(
+    state: State<AppState>,
+    url: String,
+    dir: Option<String>,
+) -> Result<PreviewInfo, String> {
+    let url = url.trim().to_string();
+    if url.is_empty() {
+        return Err("نشانی دانلود خالی است.".into());
+    }
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err("نشانی باید با http یا https شروع شود.".into());
+    }
+    // قفلِ مدیر فقط برای خواندنِ تنظیمات و چکِ مقصدِ تکراری گرفته
+    // می‌شود؛ پروبِ شبکه بیرونِ قفل است تا کامندهای دیگر (مثل پولِ
+    // وضعیت) پشتِ سرورِ کند نمانند.
+    let (dir, file_name, already_listed) = {
+        let mgr = state.manager.lock().unwrap();
+        let settings_dir = mgr.settings().download_dir;
+        #[cfg(target_os = "android")]
+        let _ = &dir;
+        #[cfg(target_os = "android")]
+        let dir = settings_dir;
+        #[cfg(not(target_os = "android"))]
+        let dir = dir
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty())
+            .unwrap_or(settings_dir);
+        let file_name = manager::file_name_from_url(&url);
+        let dest = Path::new(&dir)
+            .join(&file_name)
+            .to_string_lossy()
+            .to_string();
+        let already_listed = mgr.dest_listed(&dest);
+        (dir, file_name, already_listed)
+    };
+    let size = engine::probe_size(&url);
+    let (free_bytes, total_bytes) = disk::free_space(Path::new(&dir));
+    Ok(PreviewInfo {
+        url,
+        file_name,
+        size,
+        dir,
+        free_bytes,
+        total_bytes,
+        already_listed,
+    })
+}
+
+/// افزودن دانلود با مسیرِ مشخصِ همان دانلود (پنجره‌ی تأیید ۰٫۶٫۹)؛
+/// مسیر تنظیمات را عوض نمی‌کند.
+#[tauri::command]
+fn add_download_to(
+    app: AppHandle,
+    state: State<AppState>,
+    url: String,
+    dir: Option<String>,
+) -> Result<DownloadItem, String> {
+    let mut mgr = state.manager.lock().unwrap();
+    let item = mgr.add_to(&url, dir.as_deref())?;
     emit_snapshot(&app, &mgr);
     Ok(item)
 }
@@ -725,6 +806,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_downloads,
             add_download,
+            preview_download,
+            add_download_to,
             pause_download,
             resume_download,
             pause_all_downloads,

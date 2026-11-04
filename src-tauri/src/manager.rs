@@ -126,6 +126,15 @@ impl DownloadManager {
     /// دانلود تنظیمات درمی‌آید. مقصد تکراری بین تسک‌های موجود رد می‌شود
     /// (اسپک موتور، بخش ۱۱: قفل مسیر مقصد).
     pub fn add(&mut self, url: &str) -> Result<DownloadItem, String> {
+        self.add_to(url, None)
+    }
+
+    /// افزودن با مسیرِ مشخصِ همان دانلود (پنجره‌ی تأیید ۰٫۶٫۹)؛ مسیر
+    /// تنظیمات را عوض نمی‌کند. مسیر خالی یعنی همان پیش‌فرض تنظیمات.
+    /// روی اندروید مسیرِ داده‌شده نادیده گرفته می‌شود: فایل همیشه در
+    /// پوشه‌ی دانلودِ تنظیمات ساخته و بعد در Downloads عمومی منتشر
+    /// می‌شود (انتخاب پوشه روی موبایل ممکن نیست).
+    pub fn add_to(&mut self, url: &str, dir: Option<&str>) -> Result<DownloadItem, String> {
         let url = url.trim();
         if url.is_empty() {
             return Err("نشانی دانلود خالی است.".into());
@@ -133,10 +142,28 @@ impl DownloadManager {
         if !url.starts_with("http://") && !url.starts_with("https://") {
             return Err("نشانی باید با http یا https شروع شود.".into());
         }
+        let dir: String = {
+            #[cfg(target_os = "android")]
+            {
+                let _ = dir;
+                self.settings.download_dir.clone()
+            }
+            #[cfg(not(target_os = "android"))]
+            {
+                match dir.map(str::trim).filter(|d| !d.is_empty()) {
+                    Some(d) => d.to_string(),
+                    None => self.settings.download_dir.clone(),
+                }
+            }
+        };
+        #[cfg(not(target_os = "android"))]
+        if !Path::new(&dir).is_absolute() {
+            return Err("مسیر دانلود باید یک مسیر کامل باشد.".into());
+        }
         let file_name = file_name_from_url(url);
-        let dest = Path::new(&self.settings.download_dir).join(&file_name);
+        let dest = Path::new(&dir).join(&file_name);
         let dest_str = dest.to_string_lossy().to_string();
-        if self.records.iter().any(|r| r.dest_path == dest_str) {
+        if self.dest_listed(&dest_str) {
             return Err("دانلودی با همین فایل مقصد در فهرست وجود دارد.".into());
         }
         let id = format!("dl-{}", self.next_seq);
@@ -163,6 +190,11 @@ impl DownloadManager {
             .find(|r| r.id == id)
             .expect("تازه ساخته شده")
             .to_item())
+    }
+
+    /// آیا مقصدی با همین مسیر در فهرست هست (پیش‌نمایش ۰٫۶٫۹).
+    pub fn dest_listed(&self, dest: &str) -> bool {
+        self.records.iter().any(|r| r.dest_path == dest)
     }
 
     /// مکث: فقط از وضعیت «در حال دانلود».
@@ -760,5 +792,24 @@ mod tests {
         assert_eq!(file_name_from_url("https://ex.com/a/"), "download");
         assert_eq!(file_name_from_url("https://ex.com/%D9%81%D8%A7%DB%8C%D9%84.zip"), "فایل.zip");
         assert_eq!(file_name_from_url("https://ex.com/a%20b.mp4"), "a b.mp4");
+    }
+
+    #[test]
+    fn add_to_uses_given_dir_and_rejects_duplicate_dest() {
+        let (mut mgr, dir, _e) = manager_with(2, false);
+        let custom = std::env::temp_dir().join("downbolt-confirm-test");
+        let custom_str = custom.to_string_lossy().to_string();
+        let item = mgr
+            .add_to("https://ex.com/x.bin", Some(&custom_str))
+            .unwrap();
+        let rec = mgr.records.iter().find(|r| r.id == item.id).unwrap();
+        assert_eq!(std::path::Path::new(&rec.dest_path), custom.join("x.bin"));
+        assert!(mgr.dest_listed(&rec.dest_path));
+        assert!(mgr
+            .add_to("https://ex.com/x.bin", Some(&custom_str))
+            .is_err());
+        // همان نام در پوشه‌ای دیگر آزاد است.
+        assert!(mgr.add_to("https://ex.com/x.bin", None).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

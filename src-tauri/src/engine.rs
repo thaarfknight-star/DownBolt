@@ -293,6 +293,14 @@ fn probe(agent: &ureq::Agent, url: &str) -> Result<Probe, String> {
     }
 }
 
+/// حجم فایل از روی پروبِ موتور برای پنجره‌ی تأیید (۰٫۶٫۹).
+/// خطای پروب یعنی «نامشخص» — نه خطای کاربر: دانلودِ واقعی موقع شروع،
+/// خطای اصلی را خودش گزارش می‌کند.
+pub(crate) fn probe_size(url: &str) -> Option<u64> {
+    let agent = build_agent();
+    probe(&agent, url).ok().and_then(|p| p.total)
+}
+
 /// موتور واقعی دانلود.
 pub struct RealEngine {
     runs: Arc<Mutex<HashMap<String, Arc<RunControl>>>>,

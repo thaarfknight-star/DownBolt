@@ -3,6 +3,8 @@
 // کامندهایی که بک‌اند باید پیاده کند:
 //   list_downloads()                      -> DownloadItem[]
 //   add_download({ url })                 -> DownloadItem
+//   preview_download({ url, dir })        -> PreviewInfo  (پنجره‌ی تأیید ۰٫۶٫۹)
+//   add_download_to({ url, dir })         -> DownloadItem (پنجره‌ی تأیید ۰٫۶٫۹)
 //   pause_download({ id })                -> void
 //   resume_download({ id })               -> void
 //   remove_download({ id, deleteFile })   -> void
@@ -59,6 +61,22 @@ export interface DmSettings {
   post_download_action: PostDownloadAction;
 }
 
+/** پیش‌نمایش یک دانلود برای پنجره‌ی تأیید (۰٫۶٫۹) */
+export interface PreviewInfo {
+  url: string;
+  file_name: string;
+  /** حجم کل به بایت؛ null یعنی سرور حجم را نگفت */
+  size: number | null;
+  /** مسیر پیش‌فرضِ همان دانلود (از تنظیمات، یا مسیری که کاربر داده) */
+  dir: string;
+  /** فضای خالی درایوِ مسیر؛ null یعنی به دست نیامد */
+  free_bytes: number | null;
+  /** حجم کل درایوِ مسیر؛ null یعنی به دست نیامد */
+  total_bytes: number | null;
+  /** مقصدی با همین مسیر قبلاً در فهرست است */
+  already_listed: boolean;
+}
+
 /** رویداد تیک شمارش معکوس پس از دانلود */
 export interface PostDownloadCountdown {
   action: PostDownloadAction;
@@ -86,6 +104,10 @@ export interface UpdateReport {
 export const api = {
   listDownloads: (): Promise<DownloadItem[]> => invoke("list_downloads"),
   addDownload: (url: string): Promise<DownloadItem> => invoke("add_download", { url }),
+  previewDownload: (url: string, dir?: string | null): Promise<PreviewInfo> =>
+    invoke("preview_download", { url, dir: dir ?? null }),
+  addDownloadTo: (url: string, dir?: string | null): Promise<DownloadItem> =>
+    invoke("add_download_to", { url, dir: dir ?? null }),
   pauseDownload: (id: string): Promise<void> => invoke("pause_download", { id }),
   resumeDownload: (id: string): Promise<void> => invoke("resume_download", { id }),
   removeDownload: (id: string, deleteFile = false): Promise<void> =>
