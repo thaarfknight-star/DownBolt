@@ -111,6 +111,8 @@ fn set_dropbox_visible(
 #[tauri::command]
 fn forward_dropbox_link(app: AppHandle, url: String) -> Result<(), String> {
     if let Some(main) = app.get_webview_window("main") {
+        // unminimize فقط دسکتاپ است؛ روی اندروید چنین متدی روی WebviewWindow نیست.
+        #[cfg(desktop)]
         let _ = main.unminimize();
         let _ = main.show();
         let _ = main.set_focus();
