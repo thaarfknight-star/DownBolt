@@ -73,8 +73,8 @@ pub struct DmSettings {
     #[serde(default)]
     pub android_folder_name: Option<String>,
     /// جعبه‌ی شناور دراپ (۰٫۶٫۱۳)؛ true یعنی پنجره‌ی کوچک همیشه‌روی‌صفحه
-    /// موقع استارتاپ ساخته شود. روی فایل‌های قدیمی (بدون این فیلد) هم true
-    /// می‌گیرد تا قابلیت تازه بی‌درنگ در دسترس باشد.
+    /// موقع استارتاپ ساخته شود. از ۰٫۶٫۱۴ پیش‌فرض خاموش است (به دستور طه)
+    /// و فقط از تنظیمات روشن می‌شود.
     #[serde(default = "default_dropbox_enabled")]
     pub dropbox_enabled: bool,
 }
@@ -88,7 +88,7 @@ fn default_max_parallel() -> u32 {
 }
 
 fn default_dropbox_enabled() -> bool {
-    true
+    false
 }
 
 impl DmSettings {
@@ -101,7 +101,7 @@ impl DmSettings {
             post_download_action: PostDownloadAction::None,
             android_folder_uri: None,
             android_folder_name: None,
-        dropbox_enabled: true,
+        dropbox_enabled: false,
         }
     }
 

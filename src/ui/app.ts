@@ -211,7 +211,7 @@ export function mountApp(root: HTMLElement): void {
         </label>
         <label class="field tray-field" id="dropboxRow">
           <span>جعبه‌ی شناور دراپ (مثل FDM: پنجره‌ی کوچک همیشه‌روی‌صفحه که لینک را روی آن رها می‌کنی تا دانلود شروع شود؛ بستنش از روی خودِ جعبه هم ممکن است)</span>
-          <input id="setDropbox" type="checkbox" checked />
+          <input id="setDropbox" type="checkbox" />
         </label>
       </section>
 
@@ -960,8 +960,9 @@ export function mountApp(root: HTMLElement): void {
   window.addEventListener("dragend", hideDropOverlay);
   window.addEventListener("drop", (e) => {
     const target = e.target as HTMLElement | null;
-    // رها کردن روی فیلدهای ورودی، چسباندنِ بومیِ مرورگر است — دست نمی‌زنیم.
-    if (target?.closest("input, textarea, select, [contenteditable]")) {
+    // رها کردن روی فیلدهای ورودیِ تنظیمات، چسباندنِ بومیِ مرورگر است — دست نمی‌زنیم.
+    // ولی فیلدِ آدرسِ اصلی (#urlInput) هدفِ طبیعیِ درگِ لینک است: همان‌جا هم دانلود شروع می‌شود.
+    if (target?.closest("input, textarea, select, [contenteditable]") && !target.closest("#urlInput")) {
       hideDropOverlay();
       return;
     }
@@ -996,7 +997,10 @@ export function mountApp(root: HTMLElement): void {
       .filter((s) => s !== "" && !s.startsWith("#"));
     const urls = [...new Set(lines.filter(looksLikeUrl))];
     if (urls.length === 0) {
+      // اگر هیچ داده‌ای خوانده نشد، بی‌صدا برنگرد: همین پیام معلوم می‌کند
+      // درگ به پنجره رسیده ولی داده‌اش خالی بوده است.
       if (lines.length > 0) toast("این لینک معتبر به نظر نمی‌رسد.", true);
+      else toast("لینکی از درگ خوانده نشد.", true);
       return;
     }
     void (async () => {
