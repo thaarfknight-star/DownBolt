@@ -14,6 +14,7 @@ import {
   type DmSettings,
   type DownloadItem,
   type PostDownloadAction,
+  type PreviewInfo,
 } from "../lib/api";
 import { faInt, faNum, fmtBytes, fmtEta, fmtPct, fmtSpeed } from "../lib/format";
 import { SpeedChart } from "./chart";
@@ -686,7 +687,128 @@ export function mountApp(root: HTMLElement): void {
     void bulkRemove(items.filter((i) => selected.has(i.id)).map((i) => i.id));
   });
 
-  async function addFromInput(raw: string): Promise<void> {
+  /* ── پنجره‌ی تأیید پیش از دانلود (۰٫۶٫۹): حجم، مسیر و فضای درایو ── */
+  const confirmModal = document.createElement("div");
+  confirmModal.className = "confirm-modal";
+  confirmModal.innerHTML = `<div class="card confirm-card">
+    <h3>تأیید دانلود</h3>
+    <p class="confirm-name" id="cfName"></p>
+    <p class="confirm-url" dir="ltr" id="cfUrl"></p>
+    <div class="confirm-rows">
+      <div class="confirm-row"><span>حجم فایل</span><strong id="cfSize"></strong></div>
+      <div class="confirm-row"><span>فضای خالی درایو</span><strong id="cfFree"></strong></div>
+      <div class="confirm-row confirm-dir-row">
+        <span>مسیر دانلود</span>
+        <span class="dir-row" id="cfDirRow">
+          <input id="cfDir" dir="ltr" type="text" />
+          <button id="cfPickDirBtn" class="btn" type="button">انتخاب پوشه…</button>
+        </span>
+        <span class="confirm-dir-static" id="cfDirStatic" hidden></span>
+      </div>
+      <div class="confirm-row"><span>فایل نهایی</span><strong class="confirm-dest" dir="ltr" id="cfDest"></strong></div>
+    </div>
+    <p class="confirm-warn" id="cfWarn" hidden></p>
+    <p class="muted" id="cfAndroidNote" hidden>روی اندروید، فایل کامل‌شده در پوشه‌ی Downloads عمومی ذخیره می‌شود.</p>
+    <div class="settings-actions">
+      <button id="cfConfirmBtn" class="btn primary" type="button">شروع دانلود</button>
+      <button id="cfCancelBtn" class="btn" type="button">لغو</button>
+    </div>
+  </div>`;
+  confirmModal.hidden = true;
+  root.appendChild(confirmModal);
+  const cfName = confirmModal.querySelector<HTMLElement>("#cfName")!;
+  const cfUrl = confirmModal.querySelector<HTMLElement>("#cfUrl")!;
+  const cfSize = confirmModal.querySelector<HTMLElement>("#cfSize")!;
+  const cfFree = confirmModal.querySelector<HTMLElement>("#cfFree")!;
+  const cfDir = confirmModal.querySelector<HTMLInputElement>("#cfDir")!;
+  const cfDirRow = confirmModal.querySelector<HTMLElement>("#cfDirRow")!;
+  const cfDirStatic = confirmModal.querySelector<HTMLElement>("#cfDirStatic")!;
+  const cfDest = confirmModal.querySelector<HTMLElement>("#cfDest")!;
+  const cfWarn = confirmModal.querySelector<HTMLElement>("#cfWarn")!;
+  const cfAndroidNote = confirmModal.querySelector<HTMLElement>("#cfAndroidNote")!;
+  const cfConfirmBtn = confirmModal.querySelector<HTMLButtonElement>("#cfConfirmBtn")!;
+
+  let confirmResolve: ((r: { dir: string | null } | null) => void) | null = null;
+  function closeConfirm(result: { dir: string | null } | null): void {
+    confirmModal.hidden = true;
+    const r = confirmResolve;
+    confirmResolve = null;
+    if (r) r(result);
+  }
+  confirmModal.querySelector<HTMLElement>("#cfCancelBtn")!.addEventListener("click", () => closeConfirm(null));
+  confirmModal.addEventListener("click", (e) => {
+    if (e.target === confirmModal) closeConfirm(null);
+  });
+  window.addEventListener("keydown", (e) => {
+    if (!confirmModal.hidden && e.key === "Escape") closeConfirm(null);
+  });
+
+  function refreshConfirm(p: PreviewInfo): void {
+    cfName.textContent = p.file_name;
+    cfUrl.textContent = p.url;
+    cfUrl.title = p.url;
+    cfSize.textContent = fmtBytes(p.size);
+    cfFree.textContent =
+      p.free_bytes === null
+        ? "نامشخص"
+        : `${fmtBytes(p.free_bytes)} از ${p.total_bytes === null ? "نامشخص" : fmtBytes(p.total_bytes)}`;
+    cfDir.value = p.dir;
+    cfDirStatic.textContent = "Downloads عمومی";
+    cfDest.textContent = isAndroid
+      ? `Downloads عمومی / ${p.file_name}`
+      : `${p.dir.replace(/[\\/]$/, "")}/${p.file_name}`;
+    if (p.already_listed) {
+      cfWarn.textContent = "این فایل با همین مسیر قبلاً در فهرست است.";
+      cfWarn.hidden = false;
+      cfConfirmBtn.disabled = true;
+    } else if (p.size !== null && p.free_bytes !== null && p.free_bytes < p.size) {
+      cfWarn.textContent = "فضای خالی برای این فایل کافی نیست.";
+      cfWarn.hidden = false;
+      cfConfirmBtn.disabled = false;
+    } else {
+      cfWarn.hidden = true;
+      cfConfirmBtn.disabled = false;
+    }
+  }
+
+  function openConfirm(p: PreviewInfo): Promise<{ dir: string | null } | null> {
+    cfDirRow.hidden = isAndroid;
+    cfDirStatic.hidden = !isAndroid;
+    cfAndroidNote.hidden = !isAndroid;
+    refreshConfirm(p);
+    confirmModal.hidden = false;
+    cfConfirmBtn.focus();
+    return new Promise((resolve) => {
+      confirmResolve = resolve;
+    });
+  }
+
+  confirmModal.querySelector<HTMLElement>("#cfConfirmBtn")!.addEventListener("click", () =>
+    closeConfirm({ dir: isAndroid ? null : cfDir.value.trim() }),
+  );
+  confirmModal.querySelector<HTMLElement>("#cfPickDirBtn")!.addEventListener("click", async () => {
+    try {
+      const dir = await api.pickDownloadDir();
+      if (dir) {
+        cfDir.value = dir;
+        cfDir.dispatchEvent(new Event("change"));
+      }
+    } catch {
+      toast("دیالوگ انتخاب پوشه در دسترس نیست؛ مسیر را دستی وارد کنید.");
+    }
+  });
+  cfDir.addEventListener("change", async () => {
+    const url = cfUrl.title;
+    if (!url) return;
+    try {
+      const p = await api.previewDownload(url, cfDir.value.trim() || null);
+      refreshConfirm(p);
+    } catch {
+      // مقدارهای قبلی سر جایشان می‌مانند؛ خطا موقع تأیید دیده می‌شود.
+    }
+  });
+
+  async function addWithConfirm(raw: string): Promise<void> {
     const url = raw.trim();
     if (!url) {
       toast("اول لینک دانلود را وارد کنید.");
@@ -696,8 +818,18 @@ export function mountApp(root: HTMLElement): void {
       toast("این لینک معتبر به نظر نمی‌رسد.", true);
       return;
     }
+    let preview: PreviewInfo;
     try {
-      await api.addDownload(url);
+      toast("در حال بررسی لینک…");
+      preview = await api.previewDownload(url);
+    } catch (e) {
+      toast("بررسی لینک ناموفق بود: " + String((e as Error)?.message || e), true);
+      return;
+    }
+    const confirmed = await openConfirm(preview);
+    if (confirmed === null) return; // لغو — بی‌صدا
+    try {
+      await api.addDownloadTo(url, confirmed.dir);
       urlInput.value = "";
       toast("دانلود اضافه شد.");
       showDlPage("active");
@@ -707,9 +839,9 @@ export function mountApp(root: HTMLElement): void {
     }
   }
 
-  $("#addBtn").addEventListener("click", () => void addFromInput(urlInput.value));
+  $("#addBtn").addEventListener("click", () => void addWithConfirm(urlInput.value));
   urlInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") void addFromInput(urlInput.value);
+    if (e.key === "Enter") void addWithConfirm(urlInput.value);
   });
 
   $("#clipBtn").addEventListener("click", async () => {
@@ -729,14 +861,14 @@ export function mountApp(root: HTMLElement): void {
       return;
     }
     urlInput.value = text.trim();
-    if (looksLikeUrl(text)) void addFromInput(text);
+    if (looksLikeUrl(text)) void addWithConfirm(text);
     else toast("متن کلیپ‌بورد لینک دانلود نیست؛ در کادر قرار گرفت.");
   });
 
   /* ── درگ‌دراپ لینک: رها کردن لینک روی هرجای پنجره = افزودن دانلود ── */
   const dropOverlay = document.createElement("div");
   dropOverlay.className = "drop-overlay";
-  dropOverlay.innerHTML = `<div class="drop-overlay-card"><div class="drop-overlay-ic">⬇</div><p>لینک را رها کنید تا دانلود شود</p></div>`;
+  dropOverlay.innerHTML = `<div class="drop-overlay-card"><div class="drop-overlay-ic">⬇</div><p>لینک را رها کنید تا پیش‌نمایش دانلود باز شود</p></div>`;
   dropOverlay.hidden = true;
   root.appendChild(dropOverlay);
 
@@ -794,7 +926,7 @@ export function mountApp(root: HTMLElement): void {
       return;
     }
     void (async () => {
-      for (const url of urls) await addFromInput(url);
+      for (const url of urls) await addWithConfirm(url);
     })();
   });
 

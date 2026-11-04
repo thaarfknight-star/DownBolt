@@ -1,6 +1,6 @@
 [package]
 name = "download-manager"
-version = "0.6.8"
+version = "0.6.9"
 description = "DownBolt — دانلودمنیجر دسکتاپ (Rust + Tauri)"
 edition = "2021"
 
@@ -22,5 +22,11 @@ serde_json = "1"
 ureq = "2"
 zip = "2"
 sha2 = "0.10"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }
 [profile.release]
 strip = true

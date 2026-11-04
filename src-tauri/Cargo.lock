@@ -798,8 +798,9 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
 name = "download-manager"
-version = "0.6.8"
+version = "0.6.9"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
  "sha2",
@@ -810,6 +811,7 @@ dependencies = [
  "tauri-plugin-downbolt-foreground",
  "tauri-plugin-downbolt-install",
  "ureq",
+ "windows-sys 0.59.0",
  "zip",
 ]
 
@@ -4730,6 +4732,15 @@ name = "windows-sys"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d"
+dependencies = [
+ "windows-targets 0.52.6",
+]
+
+[[package]]
+name = "windows-sys"
+version = "0.59.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e38bc4d79ed67fd075bcc251a1c39b32a1776bbe92e5bef1f0bf1f8c531853b"
 dependencies = [
  "windows-targets 0.52.6",
 ]
