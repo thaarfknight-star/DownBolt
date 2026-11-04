@@ -259,8 +259,11 @@ pub struct UpdateInfo2 {
 
 /// خواندن فید و مقایسه با نسخه‌ی فعلی — آپدیتی نباشد یا خطا باشد: None
 #[tauri::command]
-pub async fn check_update2(state: State<'_, UpdateV2State>) -> Option<UpdateInfo2> {
-    let feed = fetch_feed()?;
+pub async fn check_update2(state: State<'_, UpdateV2State>) -> Result<Option<UpdateInfo2>, String> {
+    let feed = match fetch_feed() {
+        Some(f) => f,
+        None => return Ok(None),
+    };
     let current = current_version();
     #[cfg(target_os = "android")]
     let info = if version_gt(&feed.version, &current) {
@@ -291,7 +294,7 @@ pub async fn check_update2(state: State<'_, UpdateV2State>) -> Option<UpdateInfo
         None
     };
     *state.feed.lock().unwrap() = Some(feed);
-    info
+    Ok(info)
 }
 
 /// کنسل دانلود جاری — فایل .part می‌ماند تا دانلود بعدی از همان‌جا ادامه پیدا کند
