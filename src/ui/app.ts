@@ -4,6 +4,7 @@
 import {
   api,
   etaSeconds,
+  onDropboxLink,
   onPostDownloadCancelled,
   onPostDownloadCountdown,
   onPostDownloadExecuted,
@@ -31,7 +32,7 @@ const STATUS_LABEL: Record<DownloadItem["status"], string> = {
 const escapeHtml = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-function looksLikeUrl(s: string): boolean {
+export function looksLikeUrl(s: string): boolean {
   return /^(https?|ftp):\/\/\S+$/i.test(s.trim()) || /^magnet:\?/i.test(s.trim());
 }
 
@@ -207,6 +208,10 @@ export function mountApp(root: HTMLElement): void {
         <label class="field tray-field">
           <span>بستن به سینی سیستم (با بستن پنجره، برنامه در پس‌زمینه می‌ماند و دانلودها ادامه پیدا می‌کنند)</span>
           <input id="setTrayDm" type="checkbox" checked />
+        </label>
+        <label class="field tray-field" id="dropboxRow">
+          <span>جعبه‌ی شناور دراپ (مثل FDM: پنجره‌ی کوچک همیشه‌روی‌صفحه که لینک را روی آن رها می‌کنی تا دانلود شروع شود؛ بستنش از روی خودِ جعبه هم ممکن است)</span>
+          <input id="setDropbox" type="checkbox" checked />
         </label>
       </section>
 
@@ -1021,6 +1026,7 @@ export function mountApp(root: HTMLElement): void {
         $<HTMLInputElement>("#setParallel").value = String(s.max_connections);
         $<HTMLInputElement>("#setSpeed").value = String(s.speed_limit_kbps);
         $<HTMLSelectElement>("#setPostAction").value = s.post_download_action || "none";
+        $<HTMLInputElement>("#setDropbox").checked = s.dropbox_enabled ?? true;
         safFolder =
           s.android_folder_uri && s.android_folder_name
             ? { uri: s.android_folder_uri, name: s.android_folder_name }
@@ -1043,6 +1049,7 @@ export function mountApp(root: HTMLElement): void {
     $<HTMLElement>("#safFolderRow").hidden = !isAndroid;
     // حالت پس از دانلود فقط دسکتاپ است (خاموش/خواب/ری‌استارت سیستم).
     $<HTMLElement>("#postDownloadSection").hidden = isAndroid;
+    $<HTMLElement>("#dropboxRow").hidden = isAndroid;
   }
 
   $("#pickDirBtn").addEventListener("click", async () => {
@@ -1097,10 +1104,16 @@ export function mountApp(root: HTMLElement): void {
         .value as PostDownloadAction,
       android_folder_uri: safFolder?.uri ?? null,
       android_folder_name: safFolder?.name ?? null,
+      dropbox_enabled: $<HTMLInputElement>("#setDropbox").checked,
     };
     try {
       await api.setSettings(settings);
       settingsMsg.textContent = "تنظیمات ذخیره شد ✓";
+      try {
+        await api.setDropboxVisible(settings.dropbox_enabled);
+      } catch {
+        // بک‌اند در دسترس نیست؛ ذخیره هم خطا می‌دهد، پس مهم نیست.
+      }
     } catch (e) {
       settingsMsg.textContent = "خطا در ذخیره: " + String((e as Error)?.message || e);
     }
@@ -1150,6 +1163,9 @@ export function mountApp(root: HTMLElement): void {
 
   /* ── چرخه‌ی به‌روزرسانی: رویداد بک‌اند + پول ۱ ثانیه‌ای ── */
   void onProgressSnapshot(applySnapshot).catch(() => undefined);
+  void onDropboxLink((url) => {
+    if (looksLikeUrl(url)) void addWithConfirm(url);
+  }).catch(() => undefined);
   // تشخیص سکو برای UI اندروید (پنهان‌کردن انتخاب پوشه، دکمه‌های
   // باز/اشتراک در ردیف‌ها) و رندر دوباره‌ی فهرست با آن.
   void api.platform().then((p) => {

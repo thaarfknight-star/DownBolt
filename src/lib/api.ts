@@ -17,6 +17,9 @@
 //   read_clipboard()                      -> string          (متن کلیپ‌بورد؛ اگر نبود، فرانت fallback دارد)
 //   copy_to_clipboard({ text })           -> void            (کپی لینک هر دانلود — مثل ADM و FDM)
 //   cancel_post_download_action()         -> void            (لغو شمارش معکوس پس از دانلود)
+//   set_dropbox_visible({ visible })      -> void            (جعبه‌ی شناور دراپ ۰٫۶٫۱۳ + ذخیره‌ی انتخاب)
+//   forward_dropbox_link({ url })         -> void            (فوروارد لینک جعبه به پنجره‌ی اصلی ۰٫۶٫۱۳)
+//   رویداد dropbox-link (url) — لینکِ رها‌شده روی جعبه‌ی شناور برای پنجره‌ی اصلی
 // رویدادهای حالت پس از دانلود (۰٫۶٫۳، فقط دسکتاپ):
 //   emit("post-download-countdown", { action, remaining, run })
 //   emit("post-download-cancelled", { run })
@@ -62,6 +65,8 @@ export interface DmSettings {
   /** پوشه‌ی SAFِ اندروید (۰٫۶٫۱۰)؛ null یعنی Downloads عمومی */
   android_folder_uri: string | null;
   android_folder_name: string | null;
+  /** جعبه‌ی شناور دراپ (۰٫۶٫۱۳)؛ true یعنی موقع استارتاپ ساخته شود */
+  dropbox_enabled: boolean;
 }
 
 /** پوشه‌ی انتخاب‌شده با SAF (۰٫۶٫۱۰) */
@@ -153,6 +158,8 @@ export const api = {
     invoke("set_close_to_tray", { enabled }),
   getSettings: (): Promise<DmSettings> => invoke("get_settings"),
   setSettings: (settings: DmSettings): Promise<void> => invoke("set_settings", { settings }),
+  setDropboxVisible: (visible: boolean): Promise<void> => invoke("set_dropbox_visible", { visible }),
+  forwardDropboxLink: (url: string): Promise<void> => invoke("forward_dropbox_link", { url }),
   pickDownloadDir: (): Promise<string | null> => invoke("pick_download_dir"),
   readClipboard: (): Promise<string> => invoke("read_clipboard"),
   copyToClipboard: (text: string): Promise<void> => invoke("copy_to_clipboard", { text }),
@@ -160,6 +167,10 @@ export const api = {
 };
 
 /** اشتراک رویداد اسنپ‌شات پیشرفت؛ اگر بک‌اند رویداد نفرستد، هیچ‌وقت صدا زده نمی‌شود */
+export function onDropboxLink(cb: (url: string) => void): Promise<() => void> {
+  return listen("dropbox-link", (e) => cb(e.payload as string));
+}
+
 export function onProgressSnapshot(cb: (items: DownloadItem[]) => void): Promise<() => void> {
   return listen<DownloadItem[]>("download-progress", (e) => cb(e.payload));
 }

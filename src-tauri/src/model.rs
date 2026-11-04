@@ -72,6 +72,11 @@ pub struct DmSettings {
     /// نام نمایشیِ پوشه‌ی SAF برای نشان‌دادن در تنظیمات/دیالوگ.
     #[serde(default)]
     pub android_folder_name: Option<String>,
+    /// جعبه‌ی شناور دراپ (۰٫۶٫۱۳)؛ true یعنی پنجره‌ی کوچک همیشه‌روی‌صفحه
+    /// موقع استارتاپ ساخته شود. روی فایل‌های قدیمی (بدون این فیلد) هم true
+    /// می‌گیرد تا قابلیت تازه بی‌درنگ در دسترس باشد.
+    #[serde(default = "default_dropbox_enabled")]
+    pub dropbox_enabled: bool,
 }
 
 fn default_max_connections() -> u32 {
@@ -80,6 +85,10 @@ fn default_max_connections() -> u32 {
 
 fn default_max_parallel() -> u32 {
     3
+}
+
+fn default_dropbox_enabled() -> bool {
+    true
 }
 
 impl DmSettings {
@@ -92,6 +101,7 @@ impl DmSettings {
             post_download_action: PostDownloadAction::None,
             android_folder_uri: None,
             android_folder_name: None,
+        dropbox_enabled: true,
         }
     }
 

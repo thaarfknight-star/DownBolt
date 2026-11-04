@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 #[cfg(target_os = "android")] // مصرف‌کننده‌های downbolt_install همه اندرویدی‌اند
 use tauri_plugin_downbolt_install::DownboltInstallExt;
@@ -44,6 +44,80 @@ pub struct TrayState(pub Mutex<bool>);
 #[tauri::command]
 fn set_close_to_tray(state: tauri::State<TrayState>, enabled: bool) {
     *state.0.lock().unwrap() = enabled;
+}
+
+/// ساخت پنجره‌ی جعبه‌ی شناور دراپ (۰٫۶٫۱۳، فقط دسکتاپ).
+/// اگر پنجره از قبل باشد همان را نشان می‌دهد؛ خطا هرگز استارتاپ را خراب نمی‌کند.
+#[cfg(desktop)]
+fn create_dropbox_window(app: &AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("dropbox") {
+        let _ = w.show();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    let mut builder = WebviewWindowBuilder::new(app, "dropbox", WebviewUrl::App("index.html".into()))
+        .title("DownBolt Drop Box")
+        .inner_size(190.0, 215.0)
+        .always_on_top(true)
+        .decorations(false)
+        .transparent(true)
+        .skip_taskbar(true)
+        .resizable(false);
+    // گوشه‌ی بالا-راست مانیتور اصلی (مثل FDM)؛ اگر مانیتور خوانده نشد،
+    // جای پیش‌فرض خود Tauri می‌ماند.
+    if let Ok(Some(mon)) = app.primary_monitor() {
+        let scale = mon.scale_factor();
+        let size = mon.size();
+        let w = (190.0 * scale) as u32;
+        let h = (215.0 * scale) as u32;
+        if size.width > w + 24 && size.height > h + 24 {
+            builder = builder.position(tauri::dpi::PhysicalPosition {
+                x: (size.width - w - 16) as i32,
+                y: 16,
+            });
+        }
+    }
+    builder.build().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// نمایش/پنهان جعبه‌ی شناور + ذخیره‌ی انتخاب در تنظیمات (۰٫۶٫۱۳).
+#[tauri::command]
+fn set_dropbox_visible(
+    app: AppHandle,
+    state: State<AppState>,
+    visible: bool,
+) -> Result<(), String> {
+    {
+        let mut mgr = state.manager.lock().unwrap();
+        let mut s = mgr.settings();
+        s.dropbox_enabled = visible;
+        mgr.set_settings(s)?;
+        mgr.persist()?;
+    }
+    #[cfg(desktop)]
+    {
+        if visible {
+            let _ = create_dropbox_window(&app);
+        } else if let Some(w) = app.get_webview_window("dropbox") {
+            let _ = w.close();
+        }
+    }
+    Ok(())
+}
+
+/// فوروارد لینکِ رها‌شده روی جعبه‌ی شناور به پنجره‌ی اصلی (۰٫۶٫۱۳):
+/// پنجره‌ی اصلی را جلو می‌آورد و رویداد dropbox-link را برایش می‌فرستد تا
+/// همان جریان تأیید دانلودِ معمولی اجرا شود.
+#[tauri::command]
+fn forward_dropbox_link(app: AppHandle, url: String) -> Result<(), String> {
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.unminimize();
+        let _ = main.show();
+        let _ = main.set_focus();
+        main.emit("dropbox-link", url).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// وضعیت شمارش معکوس پس از دانلود (۰٫۶٫۳) — فقط یک شمارش هم‌زمان.
@@ -607,9 +681,18 @@ pub fn run() {
             // بقیه‌ی سیم‌کشی دست نمی‌خورند.
             let engine = Arc::new(RealEngine::new());
             let manager = DownloadManager::load(store_path, default_download_dir, engine, events_tx);
+            #[cfg(desktop)]
+            let dropbox_enabled = manager.settings().dropbox_enabled;
             app.manage(AppState {
                 manager: Mutex::new(manager),
             });
+
+            // جعبه‌ی شناور دراپ (۰٫۶٫۱۳، فقط دسکتاپ): اگر در تنظیمات روشن باشد،
+            // موقع استارتاپ ساخته می‌شود؛ خطایش استارتاپ را خراب نمی‌کند.
+            #[cfg(desktop)]
+            if dropbox_enabled {
+                let _ = create_dropbox_window(app.handle());
+            }
 
             // نخ صندوق‌پستی اکشن‌های نوتیفیکیشن (۰٫۶٫۶، فقط اندروید):
             // گیرنده‌ی اکشن‌ها به AppHandle دسترسی ندارد، پس درخواست
@@ -872,6 +955,8 @@ pub fn run() {
             copy_to_clipboard,
             cancel_post_download_action,
             set_close_to_tray,
+            set_dropbox_visible,
+            forward_dropbox_link,
             updater::check_update2,
             updater::download_update2,
             updater::cancel_update_download2,

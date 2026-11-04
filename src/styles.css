@@ -297,3 +297,38 @@ body {
 .upd-notes { white-space: pre-line; font-size: 13px; color: var(--muted); }
 .tray-field { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .tray-field input { width: 20px; height: 20px; accent-color: #22d3ee; flex: none; }
+
+/* ── جعبه‌ی شناور دراپ (۰٫۶٫۱۳) ── */
+body.dropbox-mode { background: transparent; overflow: hidden; }
+.dropbox {
+  position: relative; width: 100vw; height: 100vh;
+  display: flex; flex-direction: column;
+  background: rgba(10, 17, 32, 0.92);
+  border: 2px solid var(--neon); border-radius: 16px;
+  box-shadow: 0 0 28px rgba(34, 211, 238, 0.35);
+  color: #cffafe; overflow: hidden;
+}
+.dropbox-handle {
+  height: 30px; display: flex; align-items: center; justify-content: center;
+  gap: 8px; font-size: 13px; font-weight: 700; color: var(--neon);
+  background: rgba(34, 211, 238, 0.12); user-select: none; cursor: grab;
+}
+.dropbox-handle:active { cursor: grabbing; }
+.dropbox-handle-hint { font-size: 11px; font-weight: 400; opacity: 0.7; }
+.dropbox-close {
+  position: absolute; top: 3px; left: 6px; z-index: 5;
+  width: 22px; height: 22px; padding: 0; border: none; border-radius: 50%;
+  background: rgba(251, 113, 133, 0.25); color: #fecdd3;
+  font-size: 16px; line-height: 1; cursor: pointer;
+}
+.dropbox-close:hover { background: rgba(251, 113, 133, 0.5); }
+.dropbox-zone {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 6px;
+  text-align: center; padding: 8px;
+}
+.dropbox-zone.drag-over { background: rgba(34, 211, 238, 0.18); }
+.dropbox-ic { font-size: 38px; }
+.dropbox-text { font-size: 15px; font-weight: 700; }
+.dropbox-hint { font-size: 11.5px; opacity: 0.75; }
+.dropbox-state { min-height: 18px; font-size: 12px; color: var(--ok); }
