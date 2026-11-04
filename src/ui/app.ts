@@ -926,34 +926,24 @@ export function mountApp(root: HTMLElement): void {
 
   // شمارنده‌ی ورود/خروج: dragleave موقع رد شدن از روی بچه‌ها هم می‌آید.
   let dragDepth = 0;
-  function dragCarriesLink(e: DragEvent): boolean {
-    const types: readonly string[] = e.dataTransfer?.types ?? [];
-    // مرورگرها موقع درگِ لینک، بسته به مرورگر و محلِ درگ، یکی از این
-    // سه را می‌دهند؛ text/html را هم قبول می‌کنیم تا درگی از قلم نیفتد
-    // (نشانیِ واقعی موقع رها کردن از همان html خوانده می‌شود).
-    return (
-      types.includes("text/uri-list") ||
-      types.includes("text/plain") ||
-      types.includes("text/html")
-    );
-  }
+  // گیتِ نوعِ داده برداشته شد: هر درگی — با هر نوع داده‌ای — لایه را نشان
+  // می‌دهد و dropEffect را copy می‌کند؛ اگر موقع رها کردن نشانیِ معتبری
+  // پیدا نشد، همان‌جا توست می‌آید. این‌طوری هیچ درگی به‌خاطر نوعِ داده‌اش
+  // (مثلاً فقط text/x-moz-url) از قلم نمی‌افتد.
   function hideDropOverlay(): void {
     dragDepth = 0;
     dropOverlay.hidden = true;
   }
   window.addEventListener("dragenter", (e) => {
-    if (!dragCarriesLink(e)) return;
     e.preventDefault();
     dragDepth++;
     dropOverlay.hidden = false;
   });
   window.addEventListener("dragover", (e) => {
-    if (!dragCarriesLink(e)) return;
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
   });
   window.addEventListener("dragleave", (e) => {
-    if (!dragCarriesLink(e)) return;
     dragDepth = Math.max(0, dragDepth - 1);
     if (dragDepth === 0) dropOverlay.hidden = true;
   });
@@ -966,44 +956,52 @@ export function mountApp(root: HTMLElement): void {
       hideDropOverlay();
       return;
     }
-    if (!dragCarriesLink(e)) {
-      hideDropOverlay();
-      return;
-    }
     e.preventDefault();
     hideDropOverlay();
     const dt = e.dataTransfer;
-    if (!dt || dt.files.length > 0) return; // فقط لینک؛ دراپِ فایل نادیده گرفته می‌شود
-    // اگر مرورگر فقط html داده بود، href لینک را از همان html دربیاور.
-    const htmlHrefs: string[] = [];
-    try {
-      const html = dt.getData("text/html");
-      if (html) {
-        const doc = new DOMParser().parseFromString(html, "text/html");
-        doc.querySelectorAll("a[href]").forEach((a) => {
-          const href = a.getAttribute("href");
-          if (href) htmlHrefs.push(href);
-        });
-      }
-    } catch {
-      // نبودِ html یعنی همان دو منبعِ قبلی کافی‌اند.
-    }
-    const lines = [
-      ...dt.getData("text/uri-list").split(/\r?\n/),
-      ...dt.getData("text/plain").split(/\r?\n/),
-      ...htmlHrefs,
-    ]
-      .map((s) => s.trim())
-      .filter((s) => s !== "" && !s.startsWith("#"));
-    const urls = [...new Set(lines.filter(looksLikeUrl))];
-    if (urls.length === 0) {
-      // اگر هیچ داده‌ای خوانده نشد، بی‌صدا برنگرد: همین پیام معلوم می‌کند
-      // درگ به پنجره رسیده ولی داده‌اش خالی بوده است.
-      if (lines.length > 0) toast("این لینک معتبر به نظر نمی‌رسد.", true);
-      else toast("لینکی از درگ خوانده نشد.", true);
-      return;
-    }
+    if (!dt) return;
     void (async () => {
+      // فایل‌های میانبر اینترنتی (.url) هم لینک‌اند: نشانیِ داخلشان خوانده می‌شود.
+      const urlFiles = [...dt.files].filter((f) => f.name.toLowerCase().endsWith(".url"));
+      for (const f of urlFiles) {
+        try {
+          const text = await f.text();
+          const m = text.match(/^URL=(.+)$/im);
+          if (m && looksLikeUrl(m[1].trim())) await addWithConfirm(m[1].trim());
+        } catch {
+          // فایلِ خراب نادیده گرفته می‌شود.
+        }
+      }
+      if (dt.files.length > 0) return; // بقیه‌ی فایل‌ها نادیده گرفته می‌شوند
+      // اگر مرورگر فقط html داده بود، href لینک را از همان html دربیاور.
+      const htmlHrefs: string[] = [];
+      try {
+        const html = dt.getData("text/html");
+        if (html) {
+          const doc = new DOMParser().parseFromString(html, "text/html");
+          doc.querySelectorAll("a[href]").forEach((a) => {
+            const href = a.getAttribute("href");
+            if (href) htmlHrefs.push(href);
+          });
+        }
+      } catch {
+        // نبودِ html یعنی همان دو منبعِ قبلی کافی‌اند.
+      }
+      const lines = [
+        ...dt.getData("text/uri-list").split(/\r?\n/),
+        ...dt.getData("text/plain").split(/\r?\n/),
+        ...htmlHrefs,
+      ]
+        .map((s) => s.trim())
+        .filter((s) => s !== "" && !s.startsWith("#"));
+      const urls = [...new Set(lines.filter(looksLikeUrl))];
+      if (urls.length === 0) {
+        // اگر هیچ داده‌ای خوانده نشد، بی‌صدا برنگرد: همین پیام معلوم می‌کند
+        // درگ به پنجره رسیده ولی داده‌اش خالی بوده است.
+        if (lines.length > 0) toast("این لینک معتبر به نظر نمی‌رسد.", true);
+        else toast("لینکی از درگ خوانده نشد.", true);
+        return;
+      }
       for (const url of urls) await addWithConfirm(url);
     })();
   });
