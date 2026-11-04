@@ -11,6 +11,9 @@
     "downbolt-install:allow-delete-published",
     "downbolt-install:allow-open-file",
     "downbolt-install:allow-share-file",
+    "downbolt-install:allow-pick-folder",
+    "downbolt-install:allow-copy-to-folder",
+    "downbolt-install:allow-delete-document",
     "downbolt-foreground:default",
     "downbolt-foreground:allow-sync-notification",
     "downbolt-foreground:allow-stop-notification"

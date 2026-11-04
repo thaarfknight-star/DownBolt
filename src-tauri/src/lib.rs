@@ -244,6 +244,9 @@ pub struct PreviewInfo {
     pub free_bytes: Option<u64>,
     pub total_bytes: Option<u64>,
     pub already_listed: bool,
+    /// پوشه‌ی SAFِ پیش‌فرضِ اندروید (۰٫۶٫۱۰)؛ روی دسکتاپ همیشه None.
+    pub android_folder_uri: Option<String>,
+    pub android_folder_name: Option<String>,
 }
 
 #[tauri::command]
@@ -262,9 +265,15 @@ fn preview_download(
     // قفلِ مدیر فقط برای خواندنِ تنظیمات و چکِ مقصدِ تکراری گرفته
     // می‌شود؛ پروبِ شبکه بیرونِ قفل است تا کامندهای دیگر (مثل پولِ
     // وضعیت) پشتِ سرورِ کند نمانند.
-    let (dir, file_name, already_listed) = {
+    let (dir, file_name, already_listed, android_folder_uri, android_folder_name) = {
         let mgr = state.manager.lock().unwrap();
-        let settings_dir = mgr.settings().download_dir;
+        let settings = mgr.settings();
+        let settings_dir = settings.download_dir;
+        #[cfg(target_os = "android")]
+        let (android_folder_uri, android_folder_name) =
+            (settings.android_folder_uri, settings.android_folder_name);
+        #[cfg(not(target_os = "android"))]
+        let (android_folder_uri, android_folder_name) = (None, None);
         #[cfg(target_os = "android")]
         let _ = &dir;
         #[cfg(target_os = "android")]
@@ -280,7 +289,13 @@ fn preview_download(
             .to_string_lossy()
             .to_string();
         let already_listed = mgr.dest_listed(&dest);
-        (dir, file_name, already_listed)
+        (
+            dir,
+            file_name,
+            already_listed,
+            android_folder_uri,
+            android_folder_name,
+        )
     };
     let size = engine::probe_size(&url);
     let (free_bytes, total_bytes) = disk::free_space(Path::new(&dir));
@@ -292,20 +307,24 @@ fn preview_download(
         free_bytes,
         total_bytes,
         already_listed,
+        android_folder_uri,
+        android_folder_name,
     })
 }
 
 /// افزودن دانلود با مسیرِ مشخصِ همان دانلود (پنجره‌ی تأیید ۰٫۶٫۹)؛
-/// مسیر تنظیمات را عوض نمی‌کند.
+/// مسیر تنظیمات را عوض نمی‌کند. folder_uri یعنی پوشه‌ی SAFِ همان
+/// دانلود روی اندروید (۰٫۶٫۱۰)؛ None یعنی پیش‌فرض تنظیمات.
 #[tauri::command]
 fn add_download_to(
     app: AppHandle,
     state: State<AppState>,
     url: String,
     dir: Option<String>,
+    folder_uri: Option<String>,
 ) -> Result<DownloadItem, String> {
     let mut mgr = state.manager.lock().unwrap();
-    let item = mgr.add_to(&url, dir.as_deref())?;
+    let item = mgr.add_to(&url, dir.as_deref(), folder_uri.as_deref())?;
     emit_snapshot(&app, &mgr);
     Ok(item)
 }
@@ -385,21 +404,22 @@ fn remove_download(
     id: String,
     delete_file: bool,
 ) -> Result<(), String> {
-    // روی اندروید، «حذف فایل» ورودیِ منتشرشده در Downloads عمومی را هم
-    // پاک می‌کند؛ خطای آن مثل خطای پاک‌کردن فایل، رکورد را نگه می‌دارد
-    // تا کاربر دوباره تلاش کند.
+    // روی اندروید، «حذف فایل» ورودیِ منتشرشده (Downloads عمومی یا سند
+    // پوشه‌ی SAFِ ۰٫۶٫۱۰) را هم پاک می‌کند؛ خطای آن مثل خطای
+    // پاک‌کردن فایل، رکورد را نگه می‌دارد تا کاربر دوباره تلاش کند.
     #[cfg(target_os = "android")]
     if delete_file {
-        let uri = state
-            .manager
-            .lock()
-            .unwrap()
-            .get(&id)
-            .and_then(|r| r.public_uri);
-        if let Some(uri) = uri {
-            app.downbolt_install()
-                .delete_published(uri)
-                .map_err(|e| format!("ورودی Downloads عمومی پاک نشد: {e}"))?;
+        let rec = state.manager.lock().unwrap().get(&id);
+        if let Some(rec) = rec {
+            if let Some(uri) = rec.saf_uri {
+                app.downbolt_install()
+                    .delete_document(uri)
+                    .map_err(|e| format!("سند پوشه‌ی انتخاب‌شده پاک نشد: {e}"))?;
+            } else if let Some(uri) = rec.public_uri {
+                app.downbolt_install()
+                    .delete_published(uri)
+                    .map_err(|e| format!("ورودی Downloads عمومی پاک نشد: {e}"))?;
+            }
         }
     }
     // لغو (join نخ‌های نسل) بیرونِ قفلِ مدیر انجام می‌شود: اگر زیر
@@ -524,7 +544,7 @@ fn open_download(app: AppHandle, state: State<AppState>, id: String) -> Result<(
         .ok_or_else(|| "دانلودی با این شناسه پیدا نشد.".to_string())?;
     app.downbolt_install().open_file(
         rec.dest_path,
-        rec.public_uri,
+        rec.saf_uri.or(rec.public_uri),
         mime_for(&rec.file_name).to_string(),
     )
 }
@@ -541,7 +561,7 @@ fn share_download(app: AppHandle, state: State<AppState>, id: String) -> Result<
         .ok_or_else(|| "دانلودی با این شناسه پیدا نشد.".to_string())?;
     app.downbolt_install().share_file(
         rec.dest_path,
-        rec.public_uri,
+        rec.saf_uri.or(rec.public_uri),
         mime_for(&rec.file_name).to_string(),
     )
 }
@@ -683,24 +703,51 @@ pub fn run() {
                                     // ورودی یتیمِ دوم در MediaStore نسازد.
                                     if rec.status == model::DownloadStatus::Completed
                                         && rec.public_uri.is_none()
+                                        && rec.saf_uri.is_none()
                                     {
                                         // انتشار بهترین‌تلاش است، ولی خطا
                                         // دیگر بی‌صدا قورت داده نمی‌شود —
                                         // همان سکوت بود که باگ نام را نامرئی
-                                        // کرده بود.
+                                        // کرده بود. پوشه‌ی SAF (همین دانلود
+                                        // یا پیش‌فرض تنظیمات، ۰٫۶٫۱۰) بر
+                                        // Downloads عمومی اولویت دارد.
                                         let mime = mime_for(&rec.file_name).to_string();
-                                        match handle.downbolt_install().publish_to_downloads(
-                                            rec.dest_path,
-                                            rec.file_name,
-                                            mime,
-                                        ) {
-                                            Ok(uri) => {
-                                                let _ = mgr.set_public_uri(&id, uri);
+                                        let folder = rec.saf_folder_uri.clone().or_else(|| {
+                                            mgr.settings().android_folder_uri.clone()
+                                        });
+                                        match folder {
+                                            Some(folder_uri) => {
+                                                match handle.downbolt_install().copy_to_folder(
+                                                    rec.dest_path,
+                                                    rec.file_name,
+                                                    mime,
+                                                    folder_uri,
+                                                ) {
+                                                    Ok(uri) => {
+                                                        let _ = mgr.set_saf_uri(&id, uri);
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!(
+                                                            "DownBolt: کپی در پوشه‌ی انتخاب‌شده ناموفق بود: {e}"
+                                                        );
+                                                    }
+                                                }
                                             }
-                                            Err(e) => {
-                                                eprintln!(
-                                                    "DownBolt: انتشار در Downloads عمومی ناموفق بود: {e}"
-                                                );
+                                            None => {
+                                                match handle.downbolt_install().publish_to_downloads(
+                                                    rec.dest_path,
+                                                    rec.file_name,
+                                                    mime,
+                                                ) {
+                                                    Ok(uri) => {
+                                                        let _ = mgr.set_public_uri(&id, uri);
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!(
+                                                            "DownBolt: انتشار در Downloads عمومی ناموفق بود: {e}"
+                                                        );
+                                                    }
+                                                }
                                             }
                                         }
                                     }

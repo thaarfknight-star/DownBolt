@@ -10,6 +10,58 @@
 <tr>
 <td>
 
+`downbolt-install:allow-copy-to-folder`
+
+</td>
+<td>
+
+Enables the copy_to_folder command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`downbolt-install:deny-copy-to-folder`
+
+</td>
+<td>
+
+Denies the copy_to_folder command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`downbolt-install:allow-delete-document`
+
+</td>
+<td>
+
+Enables the delete_document command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`downbolt-install:deny-delete-document`
+
+</td>
+<td>
+
+Denies the delete_document command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `downbolt-install:allow-delete-published`
 
 </td>
@@ -81,6 +133,32 @@ Enables the open_file command without any pre-configured scope.
 <td>
 
 Denies the open_file command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`downbolt-install:allow-pick-folder`
+
+</td>
+<td>
+
+Enables the pick_folder command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`downbolt-install:deny-pick-folder`
+
+</td>
+<td>
+
+Denies the pick_folder command without any pre-configured scope.
 
 </td>
 </tr>

@@ -65,6 +65,13 @@ pub struct DmSettings {
     /// بدون خطا خوانده می‌شوند و «هیچ‌کدام» می‌گیرند.
     #[serde(default)]
     pub post_download_action: PostDownloadAction,
+    /// پوشه‌ی دانلودِ انتخاب‌شده با SAF روی اندروید (۰٫۶٫۱۰)؛ None یعنی
+    /// Downloads عمومی. URI درختِ SAF است، نه مسیر فایل‌سیستم.
+    #[serde(default)]
+    pub android_folder_uri: Option<String>,
+    /// نام نمایشیِ پوشه‌ی SAF برای نشان‌دادن در تنظیمات/دیالوگ.
+    #[serde(default)]
+    pub android_folder_name: Option<String>,
 }
 
 fn default_max_connections() -> u32 {
@@ -83,6 +90,8 @@ impl DmSettings {
             max_connections: default_max_connections(),
             speed_limit_kbps: 0,
             post_download_action: PostDownloadAction::None,
+            android_folder_uri: None,
+            android_folder_name: None,
         }
     }
 
@@ -110,6 +119,15 @@ pub struct DownloadRecord {
     /// حذف از دیسک همین ورودی را هم پاک می‌کند.
     #[serde(default)]
     pub public_uri: Option<String>,
+    /// پوشه‌ی SAFِ همان دانلود (۰٫۶٫۱۰)؛ None یعنی پیش‌فرض تنظیمات.
+    /// فقط اندروید؛ روی دسکتاپ همیشه None است.
+    #[serde(default)]
+    pub saf_folder_uri: Option<String>,
+    /// URI سندِ کپی‌شده در پوشه‌ی SAF (۰٫۶٫۱۰)؛ حذف از دیسک همین سند
+    /// را پاک می‌کند. با public_uri جمع نمی‌شود: هر دانلود یا در
+    /// Downloads عمومی منتشر می‌شود یا در پوشه‌ی SAF کپی می‌شود.
+    #[serde(default)]
+    pub saf_uri: Option<String>,
     pub size: Option<u64>,
     pub downloaded: u64,
     pub speed: u64,

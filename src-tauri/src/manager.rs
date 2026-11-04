@@ -92,6 +92,17 @@ impl DownloadManager {
         self.persist()
     }
 
+    /// ثبت URI سندِ کپی‌شده در پوشه‌ی SAF (۰٫۶٫۱۰)؛ آینه‌ی set_public_uri.
+    pub fn set_saf_uri(&mut self, id: &str, uri: String) -> Result<(), String> {
+        let rec = self
+            .records
+            .iter_mut()
+            .find(|r| r.id == id)
+            .ok_or_else(|| "دانلودی با این شناسه پیدا نشد.".to_string())?;
+        rec.saf_uri = Some(uri);
+        self.persist()
+    }
+
     /// دسترسی به موتور برای لغوِ بدون قفل (lib.rs): لغو، نخِ نسل را
     /// join می‌کند و نباید زیر قفلِ مدیر صدا زده شود.
     pub fn engine(&self) -> Arc<dyn DownloadEngine> {
@@ -126,15 +137,21 @@ impl DownloadManager {
     /// دانلود تنظیمات درمی‌آید. مقصد تکراری بین تسک‌های موجود رد می‌شود
     /// (اسپک موتور، بخش ۱۱: قفل مسیر مقصد).
     pub fn add(&mut self, url: &str) -> Result<DownloadItem, String> {
-        self.add_to(url, None)
+        self.add_to(url, None, None)
     }
 
     /// افزودن با مسیرِ مشخصِ همان دانلود (پنجره‌ی تأیید ۰٫۶٫۹)؛ مسیر
     /// تنظیمات را عوض نمی‌کند. مسیر خالی یعنی همان پیش‌فرض تنظیمات.
     /// روی اندروید مسیرِ داده‌شده نادیده گرفته می‌شود: فایل همیشه در
-    /// پوشه‌ی دانلودِ تنظیمات ساخته و بعد در Downloads عمومی منتشر
-    /// می‌شود (انتخاب پوشه روی موبایل ممکن نیست).
-    pub fn add_to(&mut self, url: &str, dir: Option<&str>) -> Result<DownloadItem, String> {
+    /// پوشه‌ی دانلودِ تنظیمات ساخته می‌شود و بعد — اگر پوشه‌ی SAF
+    /// (همین دانلود یا پیش‌فرض تنظیمات) باشد در همان پوشه کپی می‌شود،
+    /// وگرنه در Downloads عمومی منتشر می‌شود (۰٫۶٫۱۰).
+    pub fn add_to(
+        &mut self,
+        url: &str,
+        dir: Option<&str>,
+        android_folder_uri: Option<&str>,
+    ) -> Result<DownloadItem, String> {
         let url = url.trim();
         if url.is_empty() {
             return Err("نشانی دانلود خالی است.".into());
@@ -168,6 +185,18 @@ impl DownloadManager {
         }
         let id = format!("dl-{}", self.next_seq);
         self.next_seq += 1;
+        // پوشه‌ی SAF فقط روی اندروید معنا دارد؛ روی دسکتاپ پارامتر
+        // نادیده گرفته می‌شود تا رکورد هرگز URI قلابی نگیرد.
+        #[cfg(target_os = "android")]
+        let saf_folder_uri = android_folder_uri
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+            .map(str::to_string);
+        #[cfg(not(target_os = "android"))]
+        let saf_folder_uri: Option<String> = {
+            let _ = android_folder_uri;
+            None
+        };
         let rec = DownloadRecord {
             id: id.clone(),
             url: url.to_string(),
@@ -179,6 +208,8 @@ impl DownloadManager {
             status: DownloadStatus::Queued,
             error: None,
             public_uri: None,
+            saf_folder_uri,
+            saf_uri: None,
             created_at: now_iso(),
         };
         self.records.push(rec);
@@ -800,16 +831,16 @@ mod tests {
         let custom = std::env::temp_dir().join("downbolt-confirm-test");
         let custom_str = custom.to_string_lossy().to_string();
         let item = mgr
-            .add_to("https://ex.com/x.bin", Some(&custom_str))
+            .add_to("https://ex.com/x.bin", Some(&custom_str), None)
             .unwrap();
         let rec = mgr.records.iter().find(|r| r.id == item.id).unwrap();
         assert_eq!(std::path::Path::new(&rec.dest_path), custom.join("x.bin"));
         assert!(mgr.dest_listed(&rec.dest_path));
         assert!(mgr
-            .add_to("https://ex.com/x.bin", Some(&custom_str))
+            .add_to("https://ex.com/x.bin", Some(&custom_str), None)
             .is_err());
         // همان نام در پوشه‌ای دیگر آزاد است.
-        assert!(mgr.add_to("https://ex.com/x.bin", None).is_ok());
+        assert!(mgr.add_to("https://ex.com/x.bin", None, None).is_ok());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -15,6 +15,7 @@ import {
   type DownloadItem,
   type PostDownloadAction,
   type PreviewInfo,
+  type SafFolder,
 } from "../lib/api";
 import { faInt, faNum, fmtBytes, fmtEta, fmtPct, fmtSpeed } from "../lib/format";
 import { SpeedChart } from "./chart";
@@ -161,7 +162,15 @@ export function mountApp(root: HTMLElement): void {
             <button id="pickDirBtn" class="btn" type="button">انتخاب پوشه…</button>
           </span>
         </label>
-        <p id="androidDirNote" class="muted" hidden>روی اندروید، فایل‌های کامل‌شده در پوشه‌ی Downloads عمومی ذخیره می‌شوند و «حذف فایل» نسخه‌ی عمومی را هم پاک می‌کند؛ انتخاب پوشه روی موبایل ممکن نیست.</p>
+        <p id="androidDirNote" class="muted" hidden>روی اندروید، فایل‌های کامل‌شده در پوشه‌ی Downloads عمومی ذخیره می‌شوند، مگر پوشه‌ای انتخاب کرده باشی؛ «حذف فایل» نسخه‌ی عمومی یا سندِ پوشه‌ی انتخاب‌شده را هم پاک می‌کند.</p>
+        <label class="field" id="safFolderRow" hidden>
+          <span>پوشه‌ی دانلود (اندروید)</span>
+          <span class="dir-row">
+            <span id="safFolderName" class="muted">Downloads عمومی</span>
+            <button id="safPickBtn" class="btn" type="button">انتخاب پوشه…</button>
+            <button id="safClearBtn" class="btn" type="button">پیش‌فرض</button>
+          </span>
+        </label>
         <div class="field-grid">
           <label class="field">
             <span>تعداد دانلود همزمان (۱ تا ۱۶)</span>
@@ -704,11 +713,12 @@ export function mountApp(root: HTMLElement): void {
           <button id="cfPickDirBtn" class="btn" type="button">انتخاب پوشه…</button>
         </span>
         <span class="confirm-dir-static" id="cfDirStatic" hidden></span>
+        <button id="cfPickSafBtn" class="btn" type="button" hidden>انتخاب پوشه…</button>
       </div>
       <div class="confirm-row"><span>فایل نهایی</span><strong class="confirm-dest" dir="ltr" id="cfDest"></strong></div>
     </div>
     <p class="confirm-warn" id="cfWarn" hidden></p>
-    <p class="muted" id="cfAndroidNote" hidden>روی اندروید، فایل کامل‌شده در پوشه‌ی Downloads عمومی ذخیره می‌شود.</p>
+    <p class="muted" id="cfAndroidNote" hidden>روی اندروید، فایل کامل‌شده در پوشه‌ی انتخاب‌شده یا Downloads عمومی ذخیره می‌شود.</p>
     <div class="settings-actions">
       <button id="cfConfirmBtn" class="btn primary" type="button">شروع دانلود</button>
       <button id="cfCancelBtn" class="btn" type="button">لغو</button>
@@ -727,9 +737,20 @@ export function mountApp(root: HTMLElement): void {
   const cfWarn = confirmModal.querySelector<HTMLElement>("#cfWarn")!;
   const cfAndroidNote = confirmModal.querySelector<HTMLElement>("#cfAndroidNote")!;
   const cfConfirmBtn = confirmModal.querySelector<HTMLButtonElement>("#cfConfirmBtn")!;
+  const cfPickSafBtn = confirmModal.querySelector<HTMLElement>("#cfPickSafBtn")!;
 
-  let confirmResolve: ((r: { dir: string | null } | null) => void) | null = null;
-  function closeConfirm(result: { dir: string | null } | null): void {
+  // پوشه‌ی SAFِ همان دانلود در دیالوگ (۰٫۶٫۱۰)؛ null یعنی پیش‌فرض
+  // (پوشه‌ی پیش‌فرض تنظیمات یا Downloads عمومی).
+  let dialogFolder: SafFolder | null = null;
+  let lastPreview: PreviewInfo | null = null;
+
+  let confirmResolve:
+    | ((r: { dir: string | null; folderUri: string | null } | null) => void)
+    | null = null;
+  function closeConfirm(result: {
+    dir: string | null;
+    folderUri: string | null;
+  } | null): void {
     confirmModal.hidden = true;
     const r = confirmResolve;
     confirmResolve = null;
@@ -753,9 +774,10 @@ export function mountApp(root: HTMLElement): void {
         ? "نامشخص"
         : `${fmtBytes(p.free_bytes)} از ${p.total_bytes === null ? "نامشخص" : fmtBytes(p.total_bytes)}`;
     cfDir.value = p.dir;
-    cfDirStatic.textContent = "Downloads عمومی";
+    const androidDest = dialogFolder?.name ?? "Downloads عمومی";
+    cfDirStatic.textContent = androidDest;
     cfDest.textContent = isAndroid
-      ? `Downloads عمومی / ${p.file_name}`
+      ? `${androidDest} / ${p.file_name}`
       : `${p.dir.replace(/[\\/]$/, "")}/${p.file_name}`;
     if (p.already_listed) {
       cfWarn.textContent = "این فایل با همین مسیر قبلاً در فهرست است.";
@@ -771,10 +793,20 @@ export function mountApp(root: HTMLElement): void {
     }
   }
 
-  function openConfirm(p: PreviewInfo): Promise<{ dir: string | null } | null> {
+  function openConfirm(
+    p: PreviewInfo,
+  ): Promise<{ dir: string | null; folderUri: string | null } | null> {
     cfDirRow.hidden = isAndroid;
     cfDirStatic.hidden = !isAndroid;
     cfAndroidNote.hidden = !isAndroid;
+    cfPickSafBtn.hidden = !isAndroid;
+    // پیش‌فرض دیالوگ = پوشه‌ی پیش‌فرض تنظیمات؛ کاربر می‌تواند برای
+    // همین دانلود، پوشه‌ای دیگر با SAF انتخاب کند (تنظیمات عوض نمی‌شود).
+    dialogFolder =
+      p.android_folder_uri && p.android_folder_name
+        ? { uri: p.android_folder_uri, name: p.android_folder_name }
+        : null;
+    lastPreview = p;
     refreshConfirm(p);
     confirmModal.hidden = false;
     cfConfirmBtn.focus();
@@ -784,8 +816,22 @@ export function mountApp(root: HTMLElement): void {
   }
 
   confirmModal.querySelector<HTMLElement>("#cfConfirmBtn")!.addEventListener("click", () =>
-    closeConfirm({ dir: isAndroid ? null : cfDir.value.trim() }),
+    closeConfirm({
+      dir: isAndroid ? null : cfDir.value.trim(),
+      folderUri: isAndroid ? (dialogFolder?.uri ?? null) : null,
+    }),
   );
+  cfPickSafBtn.addEventListener("click", async () => {
+    try {
+      const picked = await api.pickSafFolder();
+      if (picked) {
+        dialogFolder = picked;
+        if (lastPreview) refreshConfirm(lastPreview);
+      }
+    } catch {
+      toast("انتخاب پوشه ناموفق بود.", true);
+    }
+  });
   confirmModal.querySelector<HTMLElement>("#cfPickDirBtn")!.addEventListener("click", async () => {
     try {
       const dir = await api.pickDownloadDir();
@@ -802,6 +848,7 @@ export function mountApp(root: HTMLElement): void {
     if (!url) return;
     try {
       const p = await api.previewDownload(url, cfDir.value.trim() || null);
+      lastPreview = p;
       refreshConfirm(p);
     } catch {
       // مقدارهای قبلی سر جایشان می‌مانند؛ خطا موقع تأیید دیده می‌شود.
@@ -829,7 +876,7 @@ export function mountApp(root: HTMLElement): void {
     const confirmed = await openConfirm(preview);
     if (confirmed === null) return; // لغو — بی‌صدا
     try {
-      await api.addDownloadTo(url, confirmed.dir);
+      await api.addDownloadTo(url, confirmed.dir, confirmed.folderUri);
       urlInput.value = "";
       toast("دانلود اضافه شد.");
       showDlPage("active");
@@ -932,6 +979,15 @@ export function mountApp(root: HTMLElement): void {
 
   /* ── تنظیمات ── */
   const settingsMsg = $<HTMLElement>("#settingsMsg");
+  // پوشه‌ی SAFِ تنظیمات (۰٫۶٫۱۰)؛ فقط وقتی تنظیمات با موفقیت خوانده
+  // شده باشد معتبر است (safFolderLoaded) تا ذخیره روی خطای خواندن،
+  // پوشه‌ی موجود را پاک نکند.
+  let safFolder: SafFolder | null = null;
+  let safFolderLoaded = false;
+  function renderSafFolder(): void {
+    $<HTMLElement>("#safFolderName").textContent =
+      safFolder?.name ?? "Downloads عمومی";
+  }
   $("#settingsBtn").addEventListener("click", async () => {
     const opening = settingsPage.hidden;
     showSettingsPage(opening);
@@ -943,6 +999,12 @@ export function mountApp(root: HTMLElement): void {
         $<HTMLInputElement>("#setParallel").value = String(s.max_connections);
         $<HTMLInputElement>("#setSpeed").value = String(s.speed_limit_kbps);
         $<HTMLSelectElement>("#setPostAction").value = s.post_download_action || "none";
+        safFolder =
+          s.android_folder_uri && s.android_folder_name
+            ? { uri: s.android_folder_uri, name: s.android_folder_name }
+            : null;
+        safFolderLoaded = true;
+        renderSafFolder();
         settingsMsg.textContent = "";
       } catch {
         settingsMsg.textContent = "خواندن تنظیمات از بک‌اند ممکن نشد.";
@@ -956,6 +1018,7 @@ export function mountApp(root: HTMLElement): void {
     $<HTMLInputElement>("#setDir").disabled = isAndroid;
     $<HTMLElement>("#pickDirBtn").hidden = isAndroid;
     $<HTMLElement>("#androidDirNote").hidden = !isAndroid;
+    $<HTMLElement>("#safFolderRow").hidden = !isAndroid;
     // حالت پس از دانلود فقط دسکتاپ است (خاموش/خواب/ری‌استارت سیستم).
     $<HTMLElement>("#postDownloadSection").hidden = isAndroid;
   }
@@ -969,7 +1032,40 @@ export function mountApp(root: HTMLElement): void {
     }
   });
 
+  $("#safPickBtn").addEventListener("click", async () => {
+    try {
+      const picked = await api.pickSafFolder();
+      if (picked) {
+        safFolder = picked;
+        safFolderLoaded = true;
+        renderSafFolder();
+      }
+    } catch {
+      toast("انتخاب پوشه ناموفق بود.", true);
+    }
+  });
+
+  $("#safClearBtn").addEventListener("click", () => {
+    safFolder = null;
+    safFolderLoaded = true;
+    renderSafFolder();
+  });
+
   $("#saveSettingsBtn").addEventListener("click", async () => {
+    // اگر تنظیماتِ باز، خوانده نشده (خطای خواندن)، پوشه‌ی SAF را از
+    // بک‌اند بخوان تا ذخیره، انتخابِ موجود را پاک نکند.
+    if (!safFolderLoaded) {
+      try {
+        const cur = await api.getSettings();
+        safFolder =
+          cur.android_folder_uri && cur.android_folder_name
+            ? { uri: cur.android_folder_uri, name: cur.android_folder_name }
+            : null;
+        safFolderLoaded = true;
+      } catch {
+        // بک‌اند در دسترس نیست؛ ذخیره هم خطا می‌دهد، پس مهم نیست.
+      }
+    }
     const settings: DmSettings = {
       download_dir: $<HTMLInputElement>("#setDir").value.trim(),
       max_parallel: Math.min(16, Math.max(1, Number($<HTMLInputElement>("#setMaxParallel").value) || 3)),
@@ -977,6 +1073,8 @@ export function mountApp(root: HTMLElement): void {
       speed_limit_kbps: Math.max(0, Number($<HTMLInputElement>("#setSpeed").value) || 0),
       post_download_action: $<HTMLSelectElement>("#setPostAction")
         .value as PostDownloadAction,
+      android_folder_uri: safFolder?.uri ?? null,
+      android_folder_name: safFolder?.name ?? null,
     };
     try {
       await api.setSettings(settings);

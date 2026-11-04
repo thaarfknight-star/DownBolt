@@ -7,6 +7,9 @@ fn main() {
         "delete_published",
         "open_file",
         "share_file",
+        "pick_folder",
+        "copy_to_folder",
+        "delete_document",
     ])
     .android_path("android")
     .build();
