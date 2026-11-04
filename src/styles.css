@@ -242,12 +242,13 @@ body {
   background: rgba(4, 12, 24, 0.55);
 }
 .drop-overlay-card {
-  border: 2px dashed var(--neon); border-radius: 18px; padding: 32px 44px;
+  border: 2px dashed var(--neon); border-radius: 18px; padding: 40px 56px;
   background: rgba(10, 17, 32, 0.92); text-align: center; color: #cffafe;
   box-shadow: 0 0 32px rgba(34, 211, 238, 0.35); font-size: 17px; font-weight: 700;
 }
-.drop-overlay-card p { margin: 0; }
-.drop-overlay-ic { font-size: 34px; margin-bottom: 8px; }
+.drop-overlay-card h2 { margin: 0 0 10px; font-size: 30px; }
+.drop-overlay-card p { margin: 0; font-weight: 400; opacity: 0.85; }
+.drop-overlay-ic { font-size: 40px; margin-bottom: 12px; }
 
 /* ── پنجره‌ی تأیید پیش از دانلود (۰٫۶٫۹) ── */
 .confirm-modal:not([hidden]) {

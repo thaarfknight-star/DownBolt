@@ -915,7 +915,7 @@ export function mountApp(root: HTMLElement): void {
   /* ── درگ‌دراپ لینک: رها کردن لینک روی هرجای پنجره = افزودن دانلود ── */
   const dropOverlay = document.createElement("div");
   dropOverlay.className = "drop-overlay";
-  dropOverlay.innerHTML = `<div class="drop-overlay-card"><div class="drop-overlay-ic">⬇</div><p>لینک را رها کنید تا پیش‌نمایش دانلود باز شود</p></div>`;
+  dropOverlay.innerHTML = `<div class="drop-overlay-card"><div class="drop-overlay-ic">⬇</div><h2>اینجا رها کنید</h2><p>لینک را رها کنید تا برای دانلود آماده شود</p></div>`;
   dropOverlay.hidden = true;
   root.appendChild(dropOverlay);
 
@@ -923,7 +923,14 @@ export function mountApp(root: HTMLElement): void {
   let dragDepth = 0;
   function dragCarriesLink(e: DragEvent): boolean {
     const types: readonly string[] = e.dataTransfer?.types ?? [];
-    return types.includes("text/uri-list") || types.includes("text/plain");
+    // مرورگرها موقع درگِ لینک، بسته به مرورگر و محلِ درگ، یکی از این
+    // سه را می‌دهند؛ text/html را هم قبول می‌کنیم تا درگی از قلم نیفتد
+    // (نشانیِ واقعی موقع رها کردن از همان html خوانده می‌شود).
+    return (
+      types.includes("text/uri-list") ||
+      types.includes("text/plain") ||
+      types.includes("text/html")
+    );
   }
   function hideDropOverlay(): void {
     dragDepth = 0;
@@ -961,9 +968,24 @@ export function mountApp(root: HTMLElement): void {
     hideDropOverlay();
     const dt = e.dataTransfer;
     if (!dt || dt.files.length > 0) return; // فقط لینک؛ دراپِ فایل نادیده گرفته می‌شود
+    // اگر مرورگر فقط html داده بود، href لینک را از همان html دربیاور.
+    const htmlHrefs: string[] = [];
+    try {
+      const html = dt.getData("text/html");
+      if (html) {
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        doc.querySelectorAll("a[href]").forEach((a) => {
+          const href = a.getAttribute("href");
+          if (href) htmlHrefs.push(href);
+        });
+      }
+    } catch {
+      // نبودِ html یعنی همان دو منبعِ قبلی کافی‌اند.
+    }
     const lines = [
       ...dt.getData("text/uri-list").split(/\r?\n/),
       ...dt.getData("text/plain").split(/\r?\n/),
+      ...htmlHrefs,
     ]
       .map((s) => s.trim())
       .filter((s) => s !== "" && !s.startsWith("#"));
