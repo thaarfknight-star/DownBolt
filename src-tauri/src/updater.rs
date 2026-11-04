@@ -259,7 +259,7 @@ pub struct UpdateInfo2 {
 
 /// خواندن فید و مقایسه با نسخه‌ی فعلی — آپدیتی نباشد یا خطا باشد: None
 #[tauri::command]
-pub fn check_update2(state: State<'_, UpdateV2State>) -> Option<UpdateInfo2> {
+pub async fn check_update2(state: State<'_, UpdateV2State>) -> Option<UpdateInfo2> {
     let feed = fetch_feed()?;
     let current = current_version();
     #[cfg(target_os = "android")]
@@ -496,7 +496,7 @@ fn validate_package(zip_path: &Path, feed: &Feed) -> Result<(), String> {
 
 /// دانلود پس‌زمینه‌ی بسته (قابل کنسل/ادامه) + راستی‌آزمایی کامل؛ آماده شد → ready
 #[tauri::command]
-pub fn download_update2(
+pub async fn download_update2(
     app: AppHandle,
     state: State<'_, UpdateV2State>,
 ) -> Result<(), String> {
