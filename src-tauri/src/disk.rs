@@ -65,14 +65,10 @@ fn free_space_windows(path: &Path) -> (Option<u64>, Option<u64>) {
     wide.push(0);
     let mut free: u64 = 0;
     let mut total: u64 = 0;
-    let ok: BOOL = unsafe {
-        GetDiskFreeSpaceExW(
-            windows_sys::core::PCWSTR(wide.as_ptr()),
-            &mut free,
-            &mut total,
-            std::ptr::null_mut(),
-        )
-    };
+    // در windows-sys 0.59، ‏PCWSTR فقط یک نام مستعار برای *const u16 است
+    // (سازنده‌ی تاپلی ندارد)؛ اشاره‌گر خام مستقیم همان نوع است.
+    let ok: BOOL =
+        unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, &mut total, std::ptr::null_mut()) };
     if ok == 0 {
         (None, None)
     } else {
